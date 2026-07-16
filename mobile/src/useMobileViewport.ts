@@ -8,6 +8,11 @@ export function isKeyboardViewport(baseline: number, height: number) {
   return baseline - height > KEYBOARD_THRESHOLD
 }
 
+export function webViewportFrame(standalone: boolean, keyboardOpen: boolean, height: number, top: number) {
+  if (standalone && !keyboardOpen) return { height: '100dvh', top: '0px' }
+  return { height: `${height}px`, top: `${top}px` }
+}
+
 export function useMobileViewport() {
   const [keyboardOpen, setKeyboardOpen] = useState(false)
 
@@ -56,8 +61,9 @@ export function useMobileViewport() {
         const top = Math.round(viewport?.offsetTop ?? 0)
         const nextKeyboardOpen = isKeyboardViewport(baseline, height)
         if (!nextKeyboardOpen) baseline = Math.max(baseline, height)
-        root.style.setProperty('--app-height', `${height}px`)
-        root.style.setProperty('--app-top', `${top}px`)
+        const frame = webViewportFrame(standalone, nextKeyboardOpen, height, top)
+        root.style.setProperty('--app-height', frame.height)
+        root.style.setProperty('--app-top', frame.top)
         root.classList.toggle('keyboard-open', nextKeyboardOpen)
         setKeyboardOpen(nextKeyboardOpen)
         if (window.scrollY !== 0) window.scrollTo(0, 0)
