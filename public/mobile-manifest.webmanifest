@@ -1,0 +1,18 @@
+{
+  "id": "/",
+  "name": "Nebula",
+  "short_name": "Nebula",
+  "description": "Private mobile access to Nebula running on your PC.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "orientation": "portrait-primary",
+  "background_color": "#050506",
+  "theme_color": "#050506",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    { "src": "/nebula-icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/nebula-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

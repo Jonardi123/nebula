@@ -1,0 +1,44 @@
+workflows:
+  nebula-ios-unsigned:
+    name: Nebula iOS unsigned IPA
+    instance_type: mac_mini_m2
+    max_build_duration: 45
+    environment:
+      node: 22
+      xcode: latest
+    scripts:
+      - name: Install dependencies
+        script: npm ci
+      - name: Verify mobile source
+        script: |
+          npm run mobile:typecheck
+          npm run test
+      - name: Build and sync iOS
+        script: |
+          npm run mobile:ios:sync
+          npm run mobile:ios:validate
+      - name: Build unsigned device app
+        script: |
+          xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/ios \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=''
+      - name: Package unsigned IPA
+        script: |
+          APP_PATH='build/ios/Build/Products/Release-iphoneos/App.app'
+          test -d "$APP_PATH"
+          rm -rf build/ipa
+          mkdir -p build/ipa/Payload
+          cp -R "$APP_PATH" build/ipa/Payload/Nebula.app
+          cd build/ipa
+          /usr/bin/zip -qry ../Nebula-unsigned.ipa Payload
+    artifacts:
+      - build/Nebula-unsigned.ipa
+      - build/ios/Build/Products/Release-iphoneos/*.dSYM
+      - /tmp/xcodebuild_logs/*.log

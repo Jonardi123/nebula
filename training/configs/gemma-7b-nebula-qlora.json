@@ -1,0 +1,22 @@
+{
+  "base_model": "google/gemma-7b-it",
+  "run_name": "nebula-gemma-7b-v2",
+  "train_file": "training/data/train.jsonl",
+  "validation_file": "training/data/validation.jsonl",
+  "output_dir": "training/outputs/nebula-gemma-7b-v2-adapter",
+  "max_length": 1024,
+  "per_device_train_batch_size": 1,
+  "per_device_eval_batch_size": 1,
+  "gradient_accumulation_steps": 8,
+  "learning_rate": 0.000075,
+  "num_train_epochs": 1.0,
+  "logging_steps": 5,
+  "warmup_ratio": 0.05,
+  "weight_decay": 0.01,
+  "max_grad_norm": 0.3,
+  "seed": 42,
+  "lora_r": 16,
+  "lora_alpha": 32,
+  "lora_dropout": 0.05,
+  "target_modules": "all-linear"
+}

@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="Nebula app icon">
+  <defs>
+    <linearGradient id="bg" x1="36" x2="224" y1="24" y2="236" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#111a34"/>
+      <stop offset=".48" stop-color="#090d1b"/>
+      <stop offset="1" stop-color="#17102a"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="0" cy="0" r="1" gradientTransform="matrix(0 78 -78 0 128 128)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5ee7ff" stop-opacity=".3"/>
+      <stop offset=".5" stop-color="#7c5cff" stop-opacity=".16"/>
+      <stop offset="1" stop-color="#7c5cff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="orbit" x1="38" x2="222" y1="168" y2="86" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4fe3f4"/>
+      <stop offset=".46" stop-color="#7c78ff"/>
+      <stop offset="1" stop-color="#f06ab7"/>
+    </linearGradient>
+    <linearGradient id="corona" x1="88" x2="174" y1="162" y2="94" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4fe3f4"/>
+      <stop offset=".54" stop-color="#b6a1ff"/>
+      <stop offset="1" stop-color="#f06ab7"/>
+    </linearGradient>
+    <filter id="orbitGlow" x="-40%" y="-40%" width="180%" height="180%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="starGlow" x="-200%" y="-200%" width="500%" height="500%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#bg)"/>
+  <rect x="8.75" y="8.75" width="238.5" height="238.5" rx="55.25" fill="none" stroke="#ffffff" stroke-opacity=".12" stroke-width="1.5"/>
+  <circle cx="128" cy="128" r="78" fill="url(#halo)"/>
+
+  <ellipse cx="128" cy="128" rx="91" ry="43" fill="none" stroke="#67e8f9" stroke-opacity=".16" stroke-width="24" transform="rotate(-28 128 128)"/>
+  <ellipse cx="128" cy="128" rx="91" ry="43" fill="none" stroke="url(#orbit)" stroke-width="11" stroke-linecap="round" stroke-dasharray="360 75" stroke-dashoffset="22" transform="rotate(-28 128 128)" filter="url(#orbitGlow)"/>
+  <ellipse cx="128" cy="128" rx="74" ry="29" fill="none" stroke="#8ff4ff" stroke-opacity=".32" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="210 84" transform="rotate(34 128 128)"/>
+
+  <circle cx="128" cy="128" r="45" fill="#050711"/>
+  <circle cx="128" cy="128" r="43" fill="none" stroke="url(#corona)" stroke-width="6" stroke-linecap="round" stroke-dasharray="168 102" transform="rotate(126 128 128)" filter="url(#orbitGlow)"/>
+  <circle cx="128" cy="128" r="33" fill="#070a13"/>
+  <circle cx="115" cy="113" r="4.5" fill="#dffcff" filter="url(#starGlow)"/>
+
+  <circle cx="205" cy="91" r="4.5" fill="#f8b7e2" filter="url(#starGlow)"/>
+  <circle cx="55" cy="174" r="3.5" fill="#8ef3ff" filter="url(#starGlow)"/>
+  <circle cx="187" cy="188" r="2" fill="#bba9ff" opacity=".88"/>
+</svg>
+
