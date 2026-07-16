@@ -27,7 +27,7 @@ The bundle identifier is `com.jonard.nebula` and the minimum supported version i
 1. Push the scrubbed repository to a private GitHub repository.
 2. Add it to Codemagic.
 3. Start the `Nebula iOS unsigned IPA` workflow manually.
-4. Download `Nebula-unsigned.ipa` from the build artifacts.
+4. Download `Nebula-sideload.ipa` from the build artifacts. It carries only an ad-hoc integrity signature; Sideloadly replaces it with your personal Apple signature.
 5. Sign and install it with Sideloadly, AltStore, or another personal signing tool using your own Apple ID.
 
 The workflow intentionally does not store Apple credentials and does not publish the app. Personal signing is the final external step.

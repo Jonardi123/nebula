@@ -29,16 +29,19 @@ workflows:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY=''
-      - name: Package unsigned IPA
+      - name: Prepare app for personal sideloading
         script: |
           APP_PATH='build/ios/Build/Products/Release-iphoneos/App.app'
           test -d "$APP_PATH"
+          /usr/bin/codesign --force --deep --sign - --timestamp=none "$APP_PATH"
+          /usr/bin/codesign --verify --deep --strict "$APP_PATH"
           rm -rf build/ipa
           mkdir -p build/ipa/Payload
-          cp -R "$APP_PATH" build/ipa/Payload/Nebula.app
+          /usr/bin/ditto "$APP_PATH" build/ipa/Payload/App.app
           cd build/ipa
-          /usr/bin/zip -qry ../Nebula-unsigned.ipa Payload
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent Payload ../Nebula-sideload.ipa
+          /usr/bin/unzip -t ../Nebula-sideload.ipa
     artifacts:
-      - build/Nebula-unsigned.ipa
+      - build/Nebula-sideload.ipa
       - build/ios/Build/Products/Release-iphoneos/*.dSYM
       - /tmp/xcodebuild_logs/*.log
