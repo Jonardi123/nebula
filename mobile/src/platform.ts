@@ -1,4 +1,5 @@
 import { Capacitor, registerPlugin } from '@capacitor/core'
+import { Browser } from '@capacitor/browser'
 import { Haptics, ImpactStyle, NotificationType } from '@capacitor/haptics'
 import { Keyboard, KeyboardResize } from '@capacitor/keyboard'
 import { LocalNotifications } from '@capacitor/local-notifications'
@@ -60,10 +61,17 @@ export async function shareValue(value: string) {
   await navigator.clipboard.writeText(value)
 }
 
+export async function openPublicSource(value: string) {
+  const url = new URL(value)
+  if (url.protocol !== 'https:') throw new Error('Nebula only opens secure public source links.')
+  if (isNativeMobile) { await Browser.open({ url: url.href }); return }
+  window.open(url.href, '_blank', 'noopener,noreferrer')
+}
+
 export async function initializeNativeRuntime() {
   if (!isNativeMobile) return
   await Promise.allSettled([
-    Keyboard.setResizeMode({ mode: KeyboardResize.Body }),
+    Keyboard.setResizeMode({ mode: KeyboardResize.Native }),
     StatusBar.setStyle({ style: Style.Dark }),
     StatusBar.setOverlaysWebView({ overlay: true }),
     SplashScreen.hide(),

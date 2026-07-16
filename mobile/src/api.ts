@@ -1,6 +1,6 @@
 import { readPrivateValue, writePrivateValue } from './idb'
 import { apiUrl, deleteSecureValue, readSecureValue, shareValue, writeSecureValue } from './platform'
-import type { ConversationStore, MobileControlSettings, MobileConversation, MobileDiagnostics, MobileModelSummary, MobileRunMode, RunEvent, RuntimeStatus, SearchResult } from './types'
+import type { ConversationStore, MobileControlSettings, MobileConversation, MobileDiagnostics, MobileIntentMode, MobileModelSummary, MobileRunMode, RunEvent, RuntimeStatus, SearchResult } from './types'
 
 const TOKEN_KEY = 'device-token'
 const CACHE_KEY = 'conversation-cache'
@@ -115,10 +115,12 @@ export async function startRun(
   attachments: File[],
   mode: MobileRunMode = 'new',
   sourceMessageId?: string,
+  intentMode: MobileIntentMode = 'auto',
+  includeProjectContext = false,
 ) {
   const encoded = await Promise.all(attachments.map(filePayload))
   return request<{ runId: string }>('/api/v1/runs', {
-    method: 'POST', body: JSON.stringify({ conversationId, content, attachments: encoded, mode, sourceMessageId }),
+    method: 'POST', body: JSON.stringify({ conversationId, content, attachments: encoded, mode, sourceMessageId, intentMode, includeProjectContext }),
   })
 }
 

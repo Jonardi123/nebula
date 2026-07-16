@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { ComposerAttachment } from '../types/nebula'
 import type { AppSettings } from '../types/settings'
+import { isPrivateOrLocalUrl } from './web'
 
 export interface RemoteRunRequest {
   runId: string
@@ -10,6 +11,61 @@ export interface RemoteRunRequest {
   attachments: ComposerAttachment[]
   mode: 'new' | 'retry' | 'regenerate'
   sourceMessageId?: string
+  intentMode: MobileIntentMode
+  includeProjectContext: boolean
+}
+
+export type MobileIntentMode =
+  | 'auto'
+  | 'web_search'
+  | 'deep_research'
+  | 'deep_thinking'
+  | 'project_search'
+  | 'guided_learning'
+  | 'personal_intelligence'
+
+export function mobileIntentDirective(intent: MobileIntentMode) {
+  switch (intent) {
+    case 'web_search':
+      return '[WEB SEARCH]\nSearch the web for current sources, cite useful links, then answer. Query: '
+    case 'deep_research':
+      return '[DEEP RESEARCH]\nResearch across multiple reliable public sources, compare findings, and cite the useful links. Research goal: '
+    case 'deep_thinking':
+      return '[DEEP THINKING]\nReason carefully, check assumptions and edge cases, and produce a clear final answer. Request: '
+    case 'project_search':
+      return '[PROJECT SEARCH]\nSearch the active project and use only observed project evidence. Request: '
+    case 'guided_learning':
+      return '[GUIDED LEARNING]\nTeach this step by step, adapt the explanation to the user, and check understanding when useful. Topic: '
+    case 'personal_intelligence':
+      return '[PERSONAL INTELLIGENCE]\nUse relevant Nebula memory and preferences while avoiding unrelated private context. Request: '
+    default:
+      return ''
+  }
+}
+
+export interface MobileSourceInput {
+  id: string
+  title: string
+  url: string
+  snippet: string
+  dateChecked: string
+}
+
+export function sanitizeMobileSource(card: MobileSourceInput) {
+  try {
+    const parsed = new URL(card.url)
+    if (parsed.protocol !== 'https:' || isPrivateOrLocalUrl(card.url)) return null
+  } catch {
+    return null
+  }
+
+  return {
+    id: card.id.slice(0, 120),
+    title: card.title.slice(0, 180),
+    url: card.url,
+    snippet: card.snippet.slice(0, 500),
+    dateChecked: card.dateChecked.slice(0, 60),
+  }
 }
 
 export interface RemoteRunCancel {

@@ -1,7 +1,8 @@
 import {
-  ArrowDown, Check, ChevronDown, Copy, FileText, Menu, Mic, MoreHorizontal, Pencil,
-  Pin, Plus, RotateCcw, Search, Send, Settings, Share2, Square, SquarePen, Trash2,
-  WifiOff, X,
+  ArrowDown, Brain, Check, ChevronDown, Copy, FileText, FolderSearch, Globe2,
+  GraduationCap, Link2, Menu, Mic, MoreHorizontal, Paperclip, Pencil, Pin, Plus,
+  RotateCcw, Search, Send, Settings, Share2, Sparkles, Square, SquarePen, Trash2,
+  Waypoints, WifiOff, X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -13,11 +14,12 @@ import {
 import { deletePrivateValue, draftKey, readPrivateValue, writePrivateValue } from './idb'
 import type {
   ApprovalEvent, ConversationStore, MobileAttachment, MobileConversation, MobileMessage,
-  MobilePreferences, MobileRunMode, RunEvent, RuntimeStatus, SearchResult,
+  MobileCapabilities, MobileIntentMode, MobilePreferences, MobileRunMode,
+  MobileSourceCard, RunEvent, RuntimeStatus, SearchResult,
 } from './types'
 import { useMobileViewport } from './useMobileViewport'
 import { DEFAULT_MOBILE_PREFERENCES, loadMobilePreferences, saveMobilePreferences } from './mobileSettings'
-import { impact, notifyHaptic, showCompletionNotification } from './platform'
+import { impact, notifyHaptic, openPublicSource, showCompletionNotification } from './platform'
 import { MobileSettingsScreen } from './MobileSettingsScreen'
 
 type SpeechRecognitionLike = {
@@ -34,6 +36,25 @@ type SpeechRecognitionLike = {
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike
 
 const EMPTY_STORE: ConversationStore = { version: 2, activeId: '', sessions: [], folders: [] }
+const FALLBACK_CAPABILITIES: MobileCapabilities = {
+  webSearch: false,
+  deepResearch: false,
+  deepThinking: true,
+  projectSearch: false,
+  projectContext: false,
+  guidedLearning: true,
+  personalIntelligence: false,
+}
+
+const INTENT_LABELS: Record<MobileIntentMode, string> = {
+  auto: 'Auto',
+  web_search: 'Web Search',
+  deep_research: 'Deep Research',
+  deep_thinking: 'Deep Thinking',
+  project_search: 'Project Search',
+  guided_learning: 'Guided Learning',
+  personal_intelligence: 'Personal Intelligence',
+}
 
 function speechRecognition() {
   const target = window as Window & { SpeechRecognition?: SpeechRecognitionConstructor; webkitSpeechRecognition?: SpeechRecognitionConstructor }
@@ -104,6 +125,10 @@ export function App() {
   const [renameMode, setRenameMode] = useState(false)
   const [renameTitle, setRenameTitle] = useState('')
   const [deleteConfirm, setDeleteConfirm] = useState(false)
+  const [modeMenuOpen, setModeMenuOpen] = useState(false)
+  const [intentMode, setIntentMode] = useState<MobileIntentMode>('auto')
+  const [includeProjectContext, setIncludeProjectContext] = useState(false)
+  const [sourceCards, setSourceCards] = useState<Record<string, MobileSourceCard[]>>({})
   const streamAbort = useRef<AbortController | null>(null)
   const recognition = useRef<SpeechRecognitionLike | null>(null)
   const assistantBuffer = useRef('')
@@ -159,6 +184,8 @@ export function App() {
     [activeConversation],
   )
   const latestMessageContent = visibleMessages.at(-1)?.content
+  const capabilities = runtime.capabilities ?? FALLBACK_CAPABILITIES
+  const activeSources = activeConversation ? sourceCards[activeConversation.id] ?? [] : []
 
   const replaceConversation = useCallback((id: string, update: (conversation: MobileConversation) => MobileConversation) => {
     setStore((current) => ({
@@ -287,7 +314,7 @@ export function App() {
   }, [])
 
   useEffect(() => {
-    if (!drawerOpen && !searchOpen && !settingsOpen && !messageMenu && !conversationMenu) return
+    if (!drawerOpen && !searchOpen && !settingsOpen && !messageMenu && !conversationMenu && !modeMenuOpen) return
     const closeOverlay = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
       setDrawerOpen(false)
@@ -296,10 +323,11 @@ export function App() {
       setSettingsOpen(false)
       setMessageMenu(null)
       setConversationMenu(null)
+      setModeMenuOpen(false)
     }
     window.addEventListener('keydown', closeOverlay)
     return () => window.removeEventListener('keydown', closeOverlay)
-  }, [conversationMenu, drawerOpen, messageMenu, searchOpen, settingsOpen])
+  }, [conversationMenu, drawerOpen, messageMenu, modeMenuOpen, searchOpen, settingsOpen])
 
   useEffect(() => {
     const query = searchText.trim()
@@ -337,6 +365,8 @@ export function App() {
       setStore((current) => ({ ...current, activeId: created.id, sessions: [conversation, ...current.sessions] }))
       setActiveId(created.id)
       setDrawerOpen(false)
+      setIntentMode('auto')
+      setIncludeProjectContext(false)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not create a conversation.')
     }
@@ -374,6 +404,14 @@ export function App() {
     }
     if (event.type === 'tool_request') { if (preferences.showToolActivity) setRunStatus(`Using ${event.request?.tool?.replaceAll('_', ' ') ?? 'a tool'}`); return }
     if (event.type === 'tool_result') { if (preferences.showToolActivity) setRunStatus('Reading result'); return }
+    if (event.type === 'source' && event.source) {
+      setSourceCards((current) => {
+        const existing = current[conversationId] ?? []
+        if (existing.some((source) => source.url === event.source!.url)) return current
+        return { ...current, [conversationId]: [...existing, event.source!] }
+      })
+      return
+    }
     if (event.type === 'approval_required' && event.approval) {
       setApproval(event.approval)
       setRunStatus('Needs approval')
@@ -385,13 +423,22 @@ export function App() {
     if (event.type === 'cancelled') setRunStatus('Stopped')
   }
 
-  async function executeRun(conversationId: string, content: string, submittedFiles: File[], mode: MobileRunMode = 'new', sourceMessageId?: string) {
+  async function executeRun(
+    conversationId: string,
+    content: string,
+    submittedFiles: File[],
+    mode: MobileRunMode = 'new',
+    sourceMessageId?: string,
+    requestedIntent: MobileIntentMode = 'auto',
+    requestedProjectContext = false,
+  ) {
     setRunStatus('Connecting')
     assistantBuffer.current = ''
     nearBottom.current = true
     setShowScrollLatest(false)
     try {
-      const run = await startRun(conversationId, content, submittedFiles, mode, sourceMessageId)
+      setSourceCards((current) => ({ ...current, [conversationId]: [] }))
+      const run = await startRun(conversationId, content, submittedFiles, mode, sourceMessageId, requestedIntent, requestedProjectContext)
       setRunId(run.runId)
       const abort = new AbortController()
       streamAbort.current = abort
@@ -434,6 +481,8 @@ export function App() {
       setActiveId(conversationId)
     }
     const submittedFiles = attachments
+    const submittedIntent = intentMode
+    const submittedProjectContext = includeProjectContext
     const display = content || `Attached ${submittedFiles.map((file) => file.name).join(', ')}`
     const optimisticAttachments: MobileAttachment[] = submittedFiles.map((file) => ({
       id: `pending-${crypto.randomUUID()}`, kind: 'file', label: file.name, mimeType: file.type,
@@ -446,9 +495,11 @@ export function App() {
     }))
     setText('')
     setAttachments([])
+    setIntentMode('auto')
+    setIncludeProjectContext(false)
     setDraftReadyFor(conversationId)
     void deletePrivateValue(draftKey(conversationId))
-    await executeRun(conversationId, content || display, submittedFiles)
+    await executeRun(conversationId, content || display, submittedFiles, 'new', undefined, submittedIntent, submittedProjectContext)
   }
 
   async function rerun(source: MobileMessage, mode: Exclude<MobileRunMode, 'new'>) {
@@ -460,7 +511,7 @@ export function App() {
     replaceConversation(activeConversation.id, (conversation) => ({
       ...conversation, updatedAt: now(), messages: conversation.messages.slice(0, sourceIndex + 1),
     }))
-    await executeRun(activeConversation.id, source.content, [], mode, source.id)
+    await executeRun(activeConversation.id, source.content, [], mode, source.id, intentMode, includeProjectContext)
   }
 
   function sourceUserFor(item: MobileMessage) {
@@ -539,6 +590,14 @@ export function App() {
       return
     }
     setAttachments(selected)
+    setModeMenuOpen(false)
+  }
+
+  function chooseIntent(next: MobileIntentMode, available: boolean) {
+    if (!available) return
+    setIntentMode((current) => current === next ? 'auto' : next)
+    setModeMenuOpen(false)
+    void impact(preferences.haptics)
   }
 
   function handleMessageScroll() {
@@ -663,6 +722,7 @@ export function App() {
       className={`mobile-stage chat-stage ${keyboardOpen ? 'chat-keyboard-open' : ''}`}
       onTouchStart={beginEdgeGesture} onTouchMove={moveEdgeGesture} onTouchEnd={finishEdgeGesture}
     >
+      <div className="ambient-field" aria-hidden="true"><span /><span /><span /><span /></div>
       <header className="mobile-header">
         <button className="header-control" onClick={() => setDrawerOpen(true)} aria-label="Open conversations"><Menu size={22} /></button>
         <button className="chat-title" onClick={() => setSearchOpen(true)} aria-label="Search conversations">
@@ -692,6 +752,7 @@ export function App() {
             <p>Your PC handles the model, memory, and tools. This is the quiet window into it.</p>
           </div>
         ) : visibleMessages.map((item) => <Message key={item.id} message={item} showTimestamp={preferences.showTimestamps} onMenu={setMessageMenu} />)}
+        {activeSources.length > 0 && <SourceCards sources={activeSources} onError={setError} />}
         {runId && runStatus && <div className="run-status"><span /><span /><span />{runStatus}</div>}
       </section>
 
@@ -701,24 +762,48 @@ export function App() {
 
       <footer className="composer-wrap">
         {attachments.length > 0 && <div className="attachment-strip">{attachments.map((file) => <PendingAttachment key={`${file.name}-${file.size}-${file.lastModified}`} file={file} onRemove={() => setAttachments((current) => current.filter((item) => item !== file))} />)}</div>}
-        <div className={`mobile-composer ${listening ? 'composer-listening' : ''}`}>
-          <button className="composer-button composer-add" onClick={() => fileInput.current?.click()} disabled={!online || Boolean(runId)} aria-label="Attach file"><Plus size={22} /></button>
-          <textarea
-            ref={textarea}
-            value={text} onChange={(event) => setText(event.target.value)}
-            placeholder={online ? 'Ask Nebula' : 'PC offline'} disabled={!online || Boolean(runId)} rows={1}
-            onFocus={() => requestAnimationFrame(() => window.scrollTo(0, 0))}
-            onKeyDown={(event) => { if (event.key === 'Enter' && preferences.submitOnEnter && !event.shiftKey) { event.preventDefault(); void send() } }}
-          />
-          <button className={`composer-button ${listening ? 'active' : ''}`} onClick={toggleVoice} disabled={!online || Boolean(runId)} aria-label="Voice input"><Mic size={20} /></button>
-          {runId ? (
-            <button className="send-button stop-button" onClick={() => void stop()} aria-label="Stop Nebula"><Square size={15} fill="currentColor" /></button>
-          ) : (
-            <button className="send-button" onClick={() => void send()} disabled={!online || (!text.trim() && attachments.length === 0)} aria-label="Send"><Send size={18} /></button>
-          )}
+        <div className={`mobile-composer liquid-panel ${listening ? 'composer-listening' : ''}`}>
+          {(intentMode !== 'auto' || includeProjectContext) && <div className="composer-context-row">
+            {intentMode !== 'auto' && <button onClick={() => setIntentMode('auto')}><Sparkles size={12} />{INTENT_LABELS[intentMode]}<X size={11} /></button>}
+            {includeProjectContext && <button onClick={() => setIncludeProjectContext(false)}><FolderSearch size={12} />{runtime.activeProject?.name || 'Project Context'}<X size={11} /></button>}
+          </div>}
+          <div className="composer-main" onPointerDown={(event) => { if (!(event.target as HTMLElement).closest('button, textarea')) textarea.current?.focus() }}>
+            <button className="composer-button composer-add" onClick={() => setModeMenuOpen(true)} disabled={!online || Boolean(runId)} aria-label="Add tools and context"><Plus size={22} /></button>
+            <textarea
+              ref={textarea}
+              value={text} onChange={(event) => setText(event.target.value)}
+              placeholder={online ? 'Ask Nebula' : 'PC offline'} disabled={!online || Boolean(runId)} rows={1}
+              onKeyDown={(event) => { if (event.key === 'Enter' && preferences.submitOnEnter && !event.shiftKey) { event.preventDefault(); void send() } }}
+            />
+            <button className={`composer-button ${listening ? 'active' : ''}`} onClick={toggleVoice} disabled={!online || Boolean(runId)} aria-label="Voice input"><Mic size={20} /></button>
+            {runId ? (
+              <button className="send-button stop-button" onClick={() => void stop()} aria-label="Stop Nebula"><Square size={15} fill="currentColor" /></button>
+            ) : (
+              <button className="send-button" onClick={() => void send()} disabled={!online || (!text.trim() && attachments.length === 0)} aria-label="Send"><Send size={18} /></button>
+            )}
+          </div>
           <input ref={fileInput} type="file" multiple accept="image/png,image/jpeg,image/webp,text/*,.md,.json,.ts,.tsx,.js,.jsx,.css,.html,.pdf" hidden onChange={(event) => onFiles(event.target.files)} />
         </div>
       </footer>
+
+      {modeMenuOpen && <div className="sheet-backdrop action-backdrop" onPointerDown={(event) => { if (event.currentTarget === event.target) setModeMenuOpen(false) }}>
+        <section className="mode-sheet liquid-panel" aria-label="Nebula modes">
+          <div className="sheet-grabber" />
+          <div className="mode-sheet-title"><div><span>TOOLS & CONTEXT</span><strong>How should Nebula help?</strong></div><button onClick={() => setModeMenuOpen(false)} aria-label="Close modes"><X size={18} /></button></div>
+          <div className="mode-grid">
+            <ModeButton icon={<Globe2 size={19} />} label="Web Search" detail="Current answers with sources" active={intentMode === 'web_search'} enabled={capabilities.webSearch} onClick={() => chooseIntent('web_search', capabilities.webSearch)} />
+            <ModeButton icon={<Search size={19} />} label="Deep Research" detail="Compare multiple public sources" active={intentMode === 'deep_research'} enabled={capabilities.deepResearch} onClick={() => chooseIntent('deep_research', capabilities.deepResearch)} />
+            <ModeButton icon={<Brain size={19} />} label="Deep Thinking" detail="Stronger reasoning and review" active={intentMode === 'deep_thinking'} enabled={capabilities.deepThinking} onClick={() => chooseIntent('deep_thinking', capabilities.deepThinking)} />
+            <ModeButton icon={<FolderSearch size={19} />} label="Project Search" detail={runtime.activeProject?.name || 'Open a project on your PC'} active={intentMode === 'project_search'} enabled={capabilities.projectSearch} onClick={() => chooseIntent('project_search', capabilities.projectSearch)} />
+            <ModeButton icon={<GraduationCap size={19} />} label="Guided Learning" detail="Step-by-step explanations" active={intentMode === 'guided_learning'} enabled={capabilities.guidedLearning} onClick={() => chooseIntent('guided_learning', capabilities.guidedLearning)} />
+            <ModeButton icon={<Waypoints size={19} />} label="Personal Intelligence" detail="Use relevant memory and preferences" active={intentMode === 'personal_intelligence'} enabled={capabilities.personalIntelligence} onClick={() => chooseIntent('personal_intelligence', capabilities.personalIntelligence)} />
+          </div>
+          <div className="mode-sheet-actions">
+            <button disabled={!capabilities.projectContext} className={includeProjectContext ? 'active' : ''} onClick={() => { setIncludeProjectContext((current) => !current); setModeMenuOpen(false); void impact(preferences.haptics) }}><FolderSearch size={18} /><span><strong>Project Context</strong><small>{runtime.activeProject?.name || 'No project selected on PC'}</small></span>{includeProjectContext && <Check size={16} />}</button>
+            <button onClick={() => fileInput.current?.click()}><Paperclip size={18} /><span><strong>Attach Photo or File</strong><small>Up to 6 files, 8 MB total</small></span></button>
+          </div>
+        </section>
+      </div>}
 
       {drawerOpen && <div className="sheet-backdrop" onPointerDown={(event) => { if (event.currentTarget === event.target) setDrawerOpen(false) }}>
         <aside className="conversation-sheet liquid-panel" onTouchStart={beginDrawerGesture} onTouchMove={moveDrawerGesture} onTouchEnd={finishDrawerGesture}>
@@ -798,6 +883,37 @@ export function App() {
       </div>}
     </main>
   )
+}
+
+function ModeButton({ icon, label, detail, active, enabled, onClick }: {
+  icon: React.ReactNode
+  label: string
+  detail: string
+  active: boolean
+  enabled: boolean
+  onClick: () => void
+}) {
+  return <button className={`mode-option ${active ? 'active' : ''}`} disabled={!enabled} onClick={onClick}>
+    <i>{icon}</i>
+    <span><strong>{label}</strong><small>{enabled ? detail : `${detail} - unavailable`}</small></span>
+    {active && <Check size={16} />}
+  </button>
+}
+
+function SourceCards({ sources, onError }: { sources: MobileSourceCard[]; onError: (message: string) => void }) {
+  return <section className="mobile-source-section" aria-label="Sources">
+    <div className="source-heading"><Link2 size={14} /><span>Sources</span><small>{sources.length}</small></div>
+    <div className="source-card-row">{sources.map((source) => {
+      let domain = 'Source'
+      try { domain = new URL(source.url).hostname.replace(/^www\./, '') } catch { /* The bridge already validates source URLs. */ }
+      return <button key={source.id} className="mobile-source-card" onClick={() => void openPublicSource(source.url).catch((error) => onError(error instanceof Error ? error.message : 'Could not open that source.'))}>
+        <span className="source-domain"><Globe2 size={12} />{domain}</span>
+        <strong>{source.title}</strong>
+        <p>{source.snippet || 'Open the public source.'}</p>
+        {source.dateChecked && <time>{new Date(source.dateChecked).toLocaleDateString()}</time>}
+      </button>
+    })}</div>
+  </section>
 }
 
 function Message({ message: item, showTimestamp, onMenu }: { message: MobileMessage; showTimestamp: boolean; onMenu: (message: MobileMessage) => void }) {

@@ -6,7 +6,7 @@ const { invokeMock } = vi.hoisted(() => ({
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 
-import { createMobileRunSink } from './mobileBridge'
+import { createMobileRunSink, mobileIntentDirective, sanitizeMobileSource } from './mobileBridge'
 
 describe('mobile run event sink', () => {
   beforeEach(() => {
@@ -39,5 +39,52 @@ describe('mobile run event sink', () => {
     await sink.flush()
 
     expect(invokeMock.mock.calls.map((call) => (call[1] as { event: { type: string } }).event.type)).toEqual(['token', 'completed'])
+  })
+
+  it('maps mobile modes to internal directives without changing the visible request contract', () => {
+    expect(mobileIntentDirective('web_search')).toContain('[WEB SEARCH]')
+    expect(mobileIntentDirective('deep_research')).toContain('[DEEP RESEARCH]')
+    expect(mobileIntentDirective('deep_thinking')).toContain('[DEEP THINKING]')
+    expect(mobileIntentDirective('project_search')).toContain('[PROJECT SEARCH]')
+    expect(mobileIntentDirective('guided_learning')).toContain('[GUIDED LEARNING]')
+    expect(mobileIntentDirective('personal_intelligence')).toContain('[PERSONAL INTELLIGENCE]')
+    expect(mobileIntentDirective('auto')).toBe('')
+  })
+
+  it('only exposes capped public HTTPS source cards to mobile clients', () => {
+    expect(sanitizeMobileSource({
+      id: 'source-1',
+      title: 'A'.repeat(220),
+      url: 'https://example.com/research',
+      snippet: 'B'.repeat(700),
+      dateChecked: '2026-07-16T12:00:00.000Z',
+    })).toMatchObject({
+      id: 'source-1',
+      url: 'https://example.com/research',
+      title: 'A'.repeat(180),
+      snippet: 'B'.repeat(500),
+    })
+
+    expect(sanitizeMobileSource({
+      id: 'private',
+      title: 'Private',
+      url: 'https://192.168.1.2/secrets',
+      snippet: 'Hidden',
+      dateChecked: 'today',
+    })).toBeNull()
+    expect(sanitizeMobileSource({
+      id: 'download',
+      title: 'Download',
+      url: 'https://example.com/setup.exe',
+      snippet: 'Blocked',
+      dateChecked: 'today',
+    })).toBeNull()
+    expect(sanitizeMobileSource({
+      id: 'plaintext',
+      title: 'Plain HTTP',
+      url: 'http://example.com',
+      snippet: 'Blocked',
+      dateChecked: 'today',
+    })).toBeNull()
   })
 })

@@ -13,7 +13,11 @@ try {
   await page.route('**/api/v1/**', async (route) => {
     const path = new URL(route.request().url()).pathname
     const json = path === '/api/v1/status'
-      ? { ok: true, runtime: { service: 'online', agentStatus: 'idle', model: 'Nebula Qwen', memory: 'ready' } }
+      ? { ok: true, runtime: {
+          service: 'online', agentStatus: 'idle', model: 'Nebula Qwen', memory: 'ready',
+          activeProject: { name: 'nebula' },
+          capabilities: { webSearch: true, deepResearch: true, deepThinking: true, projectSearch: true, projectContext: true, guidedLearning: true, personalIntelligence: true },
+        } }
       : path === '/api/v1/conversations'
         ? { activeId: 'smoke-chat', folders: [], sessions: [{ id: 'smoke-chat', title: 'New chat', pinned: false, folderId: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), messages: [] }] }
         : path === '/api/v1/settings/mobile-control'
@@ -47,11 +51,22 @@ try {
   await composer.fill('Composer hitbox test')
   const box = await composer.boundingBox()
   if (!box || box.y + box.height > 844) throw new Error('Composer is outside the iPhone viewport')
+  const stage = await page.locator('.mobile-stage').boundingBox()
+  if (!stage || Math.round(stage.width) !== 390 || Math.round(stage.height) !== 844) throw new Error(`Mobile stage is not full screen: ${JSON.stringify(stage)}`)
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)
   if (overflow) throw new Error('Mobile layout has horizontal overflow')
 
   await mkdir('build', { recursive: true })
   await page.screenshot({ path: 'build/mobile-chat-smoke.png', fullPage: true })
+  await page.getByRole('button', { name: 'Add tools and context' }).click()
+  await page.getByRole('button', { name: /Deep Thinking/ }).waitFor()
+  await page.screenshot({ path: 'build/mobile-modes-smoke.png', fullPage: true })
+  await page.getByRole('button', { name: 'Close modes' }).click()
+  await page.setViewportSize({ width: 390, height: 500 })
+  await page.waitForTimeout(120)
+  const compactBox = await composer.boundingBox()
+  if (!compactBox || compactBox.y + compactBox.height > 500) throw new Error('Composer does not follow a reduced visual viewport')
+  await page.setViewportSize({ width: 390, height: 844 })
   await page.getByRole('button', { name: 'Open conversations' }).click()
   await page.getByRole('button', { name: 'Settings' }).click()
   await page.getByText('Appearance', { exact: true }).waitFor()

@@ -46,6 +46,35 @@ export interface RuntimeStatus {
   model?: string
   memoryReady?: boolean
   activeRunSource?: 'desktop' | 'mobile' | null
+  activeProject?: { name: string } | null
+  capabilities?: MobileCapabilities
+}
+
+export type MobileIntentMode =
+  | 'auto'
+  | 'web_search'
+  | 'deep_research'
+  | 'deep_thinking'
+  | 'project_search'
+  | 'guided_learning'
+  | 'personal_intelligence'
+
+export interface MobileCapabilities {
+  webSearch: boolean
+  deepResearch: boolean
+  deepThinking: boolean
+  projectSearch: boolean
+  projectContext: boolean
+  guidedLearning: boolean
+  personalIntelligence: boolean
+}
+
+export interface MobileSourceCard {
+  id: string
+  title: string
+  url: string
+  snippet: string
+  dateChecked?: string
 }
 
 export type MobileTheme = 'system' | 'dark' | 'light'
@@ -139,7 +168,7 @@ export interface ApprovalEvent {
 }
 
 export type RunEvent = {
-  type: 'accepted' | 'status' | 'token' | 'message' | 'tool_request' | 'tool_result' | 'approval_required' | 'approval_resolved' | 'error' | 'cancelled' | 'completed'
+  type: 'accepted' | 'status' | 'token' | 'message' | 'tool_request' | 'tool_result' | 'source' | 'approval_required' | 'approval_resolved' | 'error' | 'cancelled' | 'completed'
   runId: string
   conversationId?: string
   messageId?: string
@@ -150,6 +179,7 @@ export type RunEvent = {
   request?: ApprovalEvent['toolRequest']
   result?: unknown
   approval?: ApprovalEvent
+  source?: MobileSourceCard
 }
 
 export interface SearchResult {

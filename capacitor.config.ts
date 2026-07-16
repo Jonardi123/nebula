@@ -14,7 +14,7 @@ const config: CapacitorConfig = {
     iosScheme: 'capacitor',
   },
   plugins: {
-    Keyboard: { resize: KeyboardResize.Body, style: KeyboardStyle.Dark, resizeOnFullScreen: true },
+    Keyboard: { resize: KeyboardResize.Native, style: KeyboardStyle.Dark, resizeOnFullScreen: true },
     SplashScreen: {
       launchShowDuration: 900,
       launchAutoHide: true,

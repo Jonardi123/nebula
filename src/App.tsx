@@ -47,6 +47,8 @@ import { listFiles, readFile, type FileNode } from './lib/fileSystem'
 import type { ComposerAttachment, WorkspaceAwarenessSnapshot } from './types/nebula'
 import type { ApprovalRequest, ToolResult } from './types/tools'
 import type { WebFetchResult, WebSearchResult } from './lib/web'
+import { getEnabledToolNames } from './skills'
+import type { AppSettings } from './types/settings'
 import { AgentRunController } from './lib/agentRun'
 import { normalizeNebulaError } from './lib/nebulaError'
 import { conversationRepository, initializeStorage } from './lib/storage'
@@ -54,12 +56,30 @@ import {
   createMobileRunSink,
   applyMobileControlChange,
   mobileControlSnapshot,
+  mobileIntentDirective,
+  sanitizeMobileSource,
   updateMobileRuntimeStatus,
   type RemoteApprovalDecision,
   type RemoteRunCancel,
   type RemoteRunRequest,
   type RemoteMobileSettingsChange,
 } from './lib/mobileBridge'
+
+function settingsForMobileRun(settings: AppSettings, request?: RemoteRunRequest): AppSettings {
+  if (!request) return settings
+  const enableContext = request.includeProjectContext || request.intentMode === 'project_search' || request.intentMode === 'personal_intelligence'
+  const enableWeb = request.intentMode === 'web_search' || request.intentMode === 'deep_research'
+  const reviewModel = settings.singleModelEnabled ? settings.singleModel : settings.modelAssignments.review
+  return {
+    ...settings,
+    autoWebSearch: enableWeb ? true : settings.autoWebSearch,
+    contextInjectionEnabled: enableContext ? true : settings.contextInjectionEnabled,
+    modelMode: request.intentMode === 'deep_thinking' && reviewModel ? 'review' : settings.modelMode,
+    enableAutomaticReviewPass: request.intentMode === 'deep_thinking' && reviewModel
+      ? true
+      : settings.enableAutomaticReviewPass,
+  }
+}
 
 function summarizeToolResult(result: ToolResult) {
   if (!result.ok) return result.error ?? 'Tool failed.'
@@ -708,7 +728,13 @@ export default function App() {
     appendTaskEvent(taskId, { type: 'user_prompt', label: 'User prompt', detail: content })
     const attachmentContext = await buildComposerAttachmentContext(attachments)
     if (run.signal.aborted || activeRun.current !== run) return
-    const agentUserMessage = attachmentContext ? { ...userMessage, content: `${content}${attachmentContext}` } : userMessage
+    const intentDirective = remoteRequest ? mobileIntentDirective(remoteRequest.intentMode) : ''
+    const projectDirective = remoteRequest?.includeProjectContext
+      ? '[PROJECT CONTEXT]\nInclude the active project context when it is available, and say clearly when it is not.\n\n'
+      : ''
+    const agentContent = `${projectDirective}${intentDirective}${content}${attachmentContext}`
+    const agentUserMessage = agentContent === content ? userMessage : { ...userMessage, content: agentContent }
+    const runSettings = settingsForMobileRun(settings, remoteRequest)
 
     const history = targetHistory
     let runModel = settings.model
@@ -723,7 +749,7 @@ export default function App() {
     const startedAt = performance.now()
     try {
       await runAgentLoop(
-      settings,
+      runSettings,
       agentUserMessage,
       history,
       {
@@ -788,6 +814,8 @@ export default function App() {
                 detail: card.url,
                 data: card,
               })
+              const source = sanitizeMobileSource(card)
+              if (source) void mobileSink?.event('source', { source })
             })
           }
 
@@ -800,6 +828,8 @@ export default function App() {
               detail: card.url,
               data: card,
             })
+            const source = sanitizeMobileSource(card)
+            if (source) void mobileSink?.event('source', { source })
           }
 
           if (
@@ -921,7 +951,7 @@ export default function App() {
         accepted: errorsForTraining.length === 0,
         tags: [
           taskId ? 'task' : 'chat',
-          settings.modelMode ?? 'auto',
+          remoteRequest?.intentMode ?? settings.modelMode ?? 'auto',
           toolCallsForTraining.length ? 'tools' : 'no-tools',
         ],
         durationMs: performance.now() - startedAt,
@@ -1126,12 +1156,25 @@ export default function App() {
   }, [lmOnline, settings.endpoint, settings.modelProvider, settings.nineRouterBaseUrl, settings.openRouterBaseUrl])
 
   useEffect(() => {
+    const enabledTools = getEnabledToolNames()
+    const hasProject = Boolean(settings.projectFolder.trim())
+    const projectName = settings.projectFolder.split(/[\\/]/).filter(Boolean).at(-1) || 'Active project'
     void updateMobileRuntimeStatus({
       agentStatus,
       service: lmOnline ? 'online' : 'offline',
       model: settings.showModelDebugInfo ? modelLabel(settings) : 'Nebula unified',
       memoryReady,
       activeRunSource: activeMobileRun.current ? 'mobile' : activeRun.current ? 'desktop' : null,
+      activeProject: hasProject ? { name: projectName } : null,
+      capabilities: {
+        webSearch: enabledTools.has('web_search'),
+        deepResearch: enabledTools.has('web_search') && enabledTools.has('web_fetch'),
+        deepThinking: true,
+        projectSearch: hasProject,
+        projectContext: hasProject,
+        guidedLearning: true,
+        personalIntelligence: memoryReady && settings.contextInjectionEnabled !== false,
+      },
       mobileControl: mobileControlSnapshot(settings),
       models: mobileModels.map((model) => ({
         key: model.id,

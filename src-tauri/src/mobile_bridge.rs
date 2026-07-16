@@ -165,6 +165,8 @@ struct RunRequest {
     attachments: Option<Vec<MobileAttachment>>,
     mode: Option<String>,
     source_message_id: Option<String>,
+    intent_mode: Option<String>,
+    include_project_context: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -206,6 +208,8 @@ struct RemoteRunPayload {
     attachments: Vec<Value>,
     mode: String,
     source_message_id: Option<String>,
+    intent_mode: String,
+    include_project_context: bool,
 }
 
 fn now_ms() -> u128 {
@@ -237,6 +241,19 @@ fn clean_device_name(value: Option<String>) -> String {
 
 fn valid_run_mode(value: &str) -> bool {
     matches!(value, "new" | "retry" | "regenerate")
+}
+
+fn valid_intent_mode(value: &str) -> bool {
+    matches!(
+        value,
+        "auto"
+            | "web_search"
+            | "deep_research"
+            | "deep_thinking"
+            | "project_search"
+            | "guided_learning"
+            | "personal_intelligence"
+    )
 }
 
 fn validate_mobile_control_change(
@@ -1026,6 +1043,14 @@ async fn start_run(
             "That run mode is not supported.",
         ));
     }
+    let intent_mode = request.intent_mode.as_deref().unwrap_or("auto");
+    if !valid_intent_mode(intent_mode) {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_intent_mode",
+            "That assistant mode is not supported.",
+        ));
+    }
     let mut content = request.content.trim().to_string();
     let mut reused_attachments = Vec::new();
     if mode != "new" {
@@ -1104,6 +1129,8 @@ async fn start_run(
         attachments,
         mode: mode.to_string(),
         source_message_id: request.source_message_id,
+        intent_mode: intent_mode.to_string(),
+        include_project_context: request.include_project_context.unwrap_or(false),
     };
     storage::mobile_audit(
         &state.inner.app,
@@ -1582,6 +1609,18 @@ mod tests {
         assert!(valid_run_mode("retry"));
         assert!(valid_run_mode("regenerate"));
         assert!(!valid_run_mode("replace_everything"));
+        for mode in [
+            "auto",
+            "web_search",
+            "deep_research",
+            "deep_thinking",
+            "project_search",
+            "guided_learning",
+            "personal_intelligence",
+        ] {
+            assert!(valid_intent_mode(mode));
+        }
+        assert!(!valid_intent_mode("unrestricted_computer_control"));
         let root = std::path::Path::new("C:/Nebula/mobile-uploads");
         assert!(attachment_path_allowed(
             root,
