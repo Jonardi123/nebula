@@ -9,6 +9,7 @@ const browser = await chromium.launch({
 
 try {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true })
+  await context.addInitScript(() => Object.defineProperty(navigator, 'standalone', { value: true, configurable: true }))
   const page = await context.newPage()
   await page.route('**/api/v1/**', async (route) => {
     const path = new URL(route.request().url()).pathname
@@ -49,6 +50,13 @@ try {
   const composer = page.getByPlaceholder('Ask Nebula')
   await composer.waitFor({ state: 'visible' })
   await composer.fill('Composer hitbox test')
+  const standalonePadding = await page.evaluate(() => {
+    document.documentElement.style.setProperty('--safe-bottom', '66px')
+    const value = getComputedStyle(document.querySelector('.composer-wrap')).paddingBottom
+    document.documentElement.style.removeProperty('--safe-bottom')
+    return value
+  })
+  if (standalonePadding !== '20px') throw new Error(`Standalone composer safe spacing regressed: ${standalonePadding}`)
   const box = await composer.boundingBox()
   if (!box || box.y + box.height > 844) throw new Error('Composer is outside the iPhone viewport')
   const stage = await page.locator('.mobile-stage').boundingBox()

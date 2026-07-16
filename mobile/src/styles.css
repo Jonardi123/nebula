@@ -581,6 +581,7 @@ body { font-size: calc(16px * var(--mobile-text-scale)); }
   background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--app-bg) 88%, transparent) 34%);
   transition: padding .28s var(--spring);
 }
+.pwa-standalone:not(.keyboard-open) .composer-wrap { padding-bottom: 20px; }
 .mobile-composer {
   display: block;
   min-height: 58px;
