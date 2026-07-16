@@ -1,4 +1,4 @@
-const CACHE = 'nebula-mobile-shell-v5'
+const CACHE = 'nebula-mobile-shell-v6'
 const SHELL = ['/', '/mobile-manifest.webmanifest', '/nebula-icon.png', '/nebula-icon.svg']
 
 self.addEventListener('install', (event) => {

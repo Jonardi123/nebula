@@ -7,15 +7,25 @@ import { initializeNativeRuntime, isNativeMobile } from './platform'
 void initializeNativeRuntime()
 
 if (!isNativeMobile && 'serviceWorker' in navigator && import.meta.env.PROD) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('/mobile-sw.js').then((registration) => {
-    const announce = () => window.dispatchEvent(new CustomEvent('nebula-mobile-update-ready'))
-    if (registration.waiting && navigator.serviceWorker.controller) announce()
+  let refreshing = false
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (refreshing) return
+    refreshing = true
+    window.location.reload()
+  })
+
+  window.addEventListener('load', () => navigator.serviceWorker.register('/mobile-sw.js', {
+    updateViaCache: 'none',
+  }).then(async (registration) => {
+    const activateWaitingWorker = () => registration.waiting?.postMessage({ type: 'SKIP_WAITING' })
+    activateWaitingWorker()
     registration.addEventListener('updatefound', () => {
       const worker = registration.installing
       worker?.addEventListener('statechange', () => {
-        if (worker.state === 'installed' && navigator.serviceWorker.controller) announce()
+        if (worker.state === 'installed') activateWaitingWorker()
       })
     })
+    await registration.update()
   }).catch(() => undefined))
 }
 

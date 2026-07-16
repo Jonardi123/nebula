@@ -500,6 +500,17 @@ body { font-size: calc(16px * var(--mobile-text-scale)); }
 :root.native-mobile.keyboard-open { --safe-bottom: 0px; }
 .native-mobile body, .native-mobile #root { height: 100%; }
 .native-mobile .mobile-stage { position: absolute; inset: 0; height: 100%; top: 0; }
+:root.pwa-standalone, .pwa-standalone body, .pwa-standalone #root {
+  width: 100vw;
+  max-width: none;
+  min-height: 100dvh;
+}
+.pwa-standalone .mobile-stage {
+  left: 0;
+  right: auto;
+  width: 100vw;
+  max-width: none;
+}
 .chat-stage {
   isolation: isolate;
   min-height: 0;

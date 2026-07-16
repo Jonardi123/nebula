@@ -13,8 +13,11 @@ export function useMobileViewport() {
 
   useEffect(() => {
     const root = document.documentElement
+    const standalone = (typeof window.matchMedia === 'function' && window.matchMedia('(display-mode: standalone)').matches)
+      || Boolean((navigator as Navigator & { standalone?: boolean }).standalone)
     root.classList.toggle('native-mobile', isNativeMobile)
     root.classList.toggle('web-mobile', !isNativeMobile)
+    root.classList.toggle('pwa-standalone', !isNativeMobile && standalone)
 
     if (isNativeMobile) {
       let disposed = false
@@ -81,6 +84,7 @@ export function useMobileViewport() {
       window.removeEventListener('orientationchange', reset)
       root.classList.remove('keyboard-open')
       root.classList.remove('web-mobile')
+      root.classList.remove('pwa-standalone')
       root.style.removeProperty('--app-height')
       root.style.removeProperty('--app-top')
     }
