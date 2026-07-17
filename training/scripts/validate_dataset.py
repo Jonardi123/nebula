@@ -78,12 +78,40 @@ def validate(path: Path, safe_tools: set[str] | None = None) -> tuple[set[str], 
     return fingerprints, report
 
 
+def normalized_user_prompts(path: Path) -> set[str]:
+    prompts: set[str] = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        item = json.loads(line)
+        for message in item.get("messages", []):
+            if message.get("role") == "user" and isinstance(message.get("content"), str):
+                prompts.add(" ".join(message["content"].casefold().split()))
+    return prompts
+
+
+def heldout_prompts(paths: list[Path]) -> set[str]:
+    prompts: set[str] = set()
+    for path in paths:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            item = json.loads(line)
+            if isinstance(item.get("prompt"), str):
+                prompts.add(" ".join(item["prompt"].casefold().split()))
+            for message in item.get("messages", []):
+                if message.get("role") == "user" and isinstance(message.get("content"), str):
+                    prompts.add(" ".join(message["content"].casefold().split()))
+    return prompts
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--train", required=True, type=Path)
     parser.add_argument("--validation", required=True, type=Path)
     parser.add_argument("--minimum-examples", type=int, default=300)
     parser.add_argument("--report", type=Path)
+    parser.add_argument("--heldout", action="append", default=[], type=Path, help="Held-out JSONL whose user prompts must not occur in training data.")
     parser.add_argument(
         "--allow-tool",
         action="append",
@@ -95,11 +123,16 @@ def main() -> int:
     train_fingerprints, train_report = validate(args.train, safe_tools)
     validation_fingerprints, validation_report = validate(args.validation, safe_tools)
     overlap = train_fingerprints & validation_fingerprints
+    dataset_prompts = normalized_user_prompts(args.train) | normalized_user_prompts(args.validation)
+    evaluation_prompts = heldout_prompts(args.heldout)
+    heldout_overlap = sorted(dataset_prompts & evaluation_prompts)
     total = train_report["examples"] + validation_report["examples"]
     report = {
         "total": total,
         "minimum": args.minimum_examples,
         "overlap": len(overlap),
+        "heldoutExactPromptOverlap": len(heldout_overlap),
+        "heldoutFiles": [str(path) for path in args.heldout],
         "train": train_report,
         "validation": validation_report,
         "passed": total >= args.minimum_examples and not overlap and not train_report["errors"] and not validation_report["errors"],
@@ -108,6 +141,8 @@ def main() -> int:
         train_report["errors"].append(f"combined dataset has {total} examples; minimum is {args.minimum_examples}")
     if overlap:
         train_report["errors"].append(f"train/validation overlap contains {len(overlap)} examples")
+    if heldout_overlap:
+        train_report["errors"].append(f"held-out evaluation overlap contains {len(heldout_overlap)} exact user prompts")
     report["passed"] = not train_report["errors"] and not validation_report["errors"]
     output = json.dumps(report, indent=2)
     print(output)

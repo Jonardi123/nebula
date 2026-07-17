@@ -15,6 +15,7 @@ import generate_synthetic_dataset  # noqa: E402
 import generate_qwen3_dataset  # noqa: E402
 import prepare_dataset  # noqa: E402
 import train_qlora  # noqa: E402
+import validate_dataset  # noqa: E402
 
 
 class FakeGemmaTokenizer:
@@ -99,11 +100,12 @@ class PipelineTests(unittest.TestCase):
         self.assertGreaterEqual(len(fingerprints), 300)
 
     def test_qwen3_cyber_seeds_are_unique_and_defensive(self):
-        examples = generate_qwen3_dataset.cyber_examples()
+        examples = [*generate_qwen3_dataset.cyber_examples(), *generate_qwen3_dataset.matrix_examples()]
         fingerprints = {json.dumps(example["messages"], sort_keys=True) for example in examples}
         categories = {example["metadata"]["category"] for example in examples}
         self.assertEqual(len(fingerprints), len(examples))
-        self.assertGreaterEqual(len(examples), 50)
+        self.assertGreaterEqual(len(examples), 500)
+        self.assertGreaterEqual(len([*generate_qwen3_dataset.canonicalize_base_examples(), *examples]), 600)
         self.assertIn("cyber_secure_code", categories)
         self.assertIn("cyber_incident_response", categories)
         self.assertIn("cyber_safety_boundary", categories)
@@ -122,6 +124,18 @@ class PipelineTests(unittest.TestCase):
                 for line in (output / "validation.jsonl").read_text(encoding="utf-8").splitlines()
             }
             self.assertFalse(train_groups & validation_groups)
+            total_rows = sum(1 for name in ("train.jsonl", "validation.jsonl") for line in (output / name).read_text(encoding="utf-8").splitlines() if line)
+            self.assertGreaterEqual(total_rows, 4000)
+
+    def test_heldout_prompt_overlap_is_detected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dataset = root / "dataset.jsonl"
+            heldout = root / "heldout.jsonl"
+            dataset.write_text(json.dumps({"messages": [{"role": "user", "content": "Review this exact code"}]}) + "\n", encoding="utf-8")
+            heldout.write_text(json.dumps({"prompt": "  REVIEW this exact code  "}) + "\n", encoding="utf-8")
+            overlap = validate_dataset.normalized_user_prompts(dataset) & validate_dataset.heldout_prompts([heldout])
+            self.assertEqual(overlap, {"review this exact code"})
 
 
 if __name__ == "__main__":

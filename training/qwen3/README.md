@@ -17,13 +17,16 @@ python training/scripts/generate_qwen3_dataset.py
 python training/scripts/validate_dataset.py `
   --train training/qwen3/data/train.jsonl `
   --validation training/qwen3/data/validation.jsonl `
-  --minimum-examples 500 `
+  --minimum-examples 4000 `
   --allow-tool run_command `
+  --heldout training/evals/qwen_coder_behavior.jsonl `
+  --heldout training/evals/qwen_coder_stress.jsonl `
+  --heldout training/evals/qwen3_cyber_behavior.jsonl `
   --report training/qwen3/data/validation-report.json
 python training/scripts/build_qwen3_bundle.py
 ```
 
-Conceptual seed groups are assigned wholly to train or validation before paraphrase expansion, preventing variants of one lesson from leaking across the split.
+The v1 corpus contains 4,010 validation-gated rows derived from 622 curated conceptual groups. Conceptual seed groups are assigned wholly to train or validation before paraphrase expansion, preventing variants of one lesson from leaking across the split. Matrix-generated rows are approved from reviewed safe templates; they are not mislabeled as individually human-written transcripts.
 
 ## Train
 
