@@ -74,6 +74,7 @@ def main() -> int:
     parser.add_argument("--label", required=True)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--max-new-tokens", type=int, default=180)
+    parser.add_argument("--no-think", action="store_true", help="Evaluate Qwen3's fast non-thinking route.")
     args = parser.parse_args()
 
     import torch
@@ -101,9 +102,16 @@ def main() -> int:
     for index, case in enumerate(load_cases(args.cases), 1):
         messages = [
             {"role": "system", "content": system},
-            {"role": "user", "content": transcript(case)},
+            {"role": "user", "content": f"{transcript(case)}\n/no_think" if args.no_think else transcript(case)},
         ]
-        encoded = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, return_tensors="pt")
+        template_options = {"enable_thinking": False} if args.no_think else {}
+        encoded = tokenizer.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_tensors="pt",
+            **template_options,
+        )
         if hasattr(encoded, "input_ids"):
             input_ids = encoded.input_ids.to(model.device)
         elif isinstance(encoded, dict):
@@ -136,6 +144,7 @@ def main() -> int:
         "label": args.label,
         "baseModel": args.base_model,
         "adapter": str(args.adapter) if args.adapter else None,
+        "thinkingMode": "off" if args.no_think else "default",
         "passed": passed,
         "total": len(results),
         "accuracy": passed / len(results),

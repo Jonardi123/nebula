@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "training/scripts"))
 
 import generate_synthetic_dataset  # noqa: E402
+import generate_qwen3_dataset  # noqa: E402
 import prepare_dataset  # noqa: E402
 import train_qlora  # noqa: E402
 
@@ -94,6 +97,31 @@ class PipelineTests(unittest.TestCase):
         ]
         fingerprints = {json.dumps(example["messages"], sort_keys=True) for example in examples}
         self.assertGreaterEqual(len(fingerprints), 300)
+
+    def test_qwen3_cyber_seeds_are_unique_and_defensive(self):
+        examples = generate_qwen3_dataset.cyber_examples()
+        fingerprints = {json.dumps(example["messages"], sort_keys=True) for example in examples}
+        categories = {example["metadata"]["category"] for example in examples}
+        self.assertEqual(len(fingerprints), len(examples))
+        self.assertGreaterEqual(len(examples), 50)
+        self.assertIn("cyber_secure_code", categories)
+        self.assertIn("cyber_incident_response", categories)
+        self.assertIn("cyber_safety_boundary", categories)
+
+    def test_qwen3_variants_do_not_cross_dataset_splits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            with patch("sys.argv", ["generate_qwen3_dataset.py", "--output-dir", str(output)]):
+                self.assertEqual(generate_qwen3_dataset.main(), 0)
+            train_groups = {
+                json.loads(line)["metadata"]["group_id"]
+                for line in (output / "train.jsonl").read_text(encoding="utf-8").splitlines()
+            }
+            validation_groups = {
+                json.loads(line)["metadata"]["group_id"]
+                for line in (output / "validation.jsonl").read_text(encoding="utf-8").splitlines()
+            }
+            self.assertFalse(train_groups & validation_groups)
 
 
 if __name__ == "__main__":

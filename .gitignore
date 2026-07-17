@@ -43,6 +43,8 @@ training/data/
 training/results/
 training/qwen/data/
 training/qwen/results/
+training/qwen3/data/
+training/qwen3/results/
 training/**/adapter/
 training/**/*adapter*.safetensors
 training/**/*.zip
