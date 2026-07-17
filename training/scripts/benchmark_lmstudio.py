@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import statistics
 import time
 import urllib.error
@@ -78,6 +79,7 @@ def main() -> int:
     parser.add_argument("--cases", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument("--no-think", action="store_true", help="Append Qwen's /no_think control to the final user turn.")
     args = parser.parse_args()
 
     cases = load_cases(args.cases)
@@ -89,6 +91,11 @@ def main() -> int:
         messages = [{"role": "system", "content": SYSTEM_PROMPT}, *case.get("messages", [])]
         if "prompt" in case:
             messages.append({"role": "user", "content": case["prompt"]})
+        if args.no_think:
+            for message in reversed(messages):
+                if message.get("role") == "user":
+                    message["content"] = f"{message.get('content', '').rstrip()}\n/no_think"
+                    break
         payload = {
             "model": args.model,
             "messages": messages,
@@ -136,6 +143,7 @@ def main() -> int:
     passed_count = sum(result["passed"] for result in results)
     report = {
         "model": args.model,
+        "thinking_mode": "off" if args.no_think else "default",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "total": len(results),
         "passed": passed_count,
@@ -150,8 +158,9 @@ def main() -> int:
         "failed_case_ids": [result["id"] for result in results if not result["passed"]],
         "note": "Raw model outputs are evaluation evidence, not automatically approved fine-tuning examples.",
     }
-    raw_path = args.output_dir / f"qwen-1.5b-raw-{stamp}.jsonl"
-    report_path = args.output_dir / f"qwen-1.5b-report-{stamp}.json"
+    model_slug = re.sub(r"[^a-z0-9]+", "-", args.model.casefold()).strip("-") or "model"
+    raw_path = args.output_dir / f"{model_slug}-raw-{stamp}.jsonl"
+    report_path = args.output_dir / f"{model_slug}-report-{stamp}.json"
     raw_path.write_text("\n".join(json.dumps(item, ensure_ascii=True) for item in results) + "\n", encoding="utf-8")
     report_path.write_text(json.dumps(report, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))

@@ -58,6 +58,31 @@ python training/scripts/validate_dataset.py `
   --minimum-examples 300
 ```
 
+## Local LM Studio Benchmarking
+
+Run deterministic behavior checks against a model already loaded in LM Studio before using its outputs as training evidence. Qwen3 models should use `--no-think` for Nebula's fast path so reasoning tokens do not consume the response budget:
+
+```powershell
+python training/scripts/benchmark_lmstudio.py `
+  --model qwen3-4b `
+  --no-think `
+  --cases training/evals/qwen_coder_behavior.jsonl `
+  --output-dir training/results/qwen3-4b-baseline
+
+python training/scripts/benchmark_lmstudio.py `
+  --model qwen3-4b `
+  --no-think `
+  --cases training/evals/qwen_coder_stress.jsonl `
+  --output-dir training/results/qwen3-4b-baseline
+
+python training/scripts/profile_lmstudio_stream.py `
+  --model qwen3-4b `
+  --no-think `
+  --output-dir training/results/qwen3-4b-baseline
+```
+
+Raw outputs are evidence for review, not automatically approved fine-tuning examples. Keep only corrected, verified responses in a future student dataset. The local `training/results/` directory is ignored by Git.
+
 ## Google Colab Training
 
 1. Open `Nebula_Gemma_7B_QLoRA_Colab.ipynb` in Google Colab.
