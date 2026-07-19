@@ -11,6 +11,18 @@ export type AgentStatus =
   | 'stopped'
   | 'error'
 
+export type PublicRunStage =
+  | 'ready'
+  | 'preparing'
+  | 'reading_context'
+  | 'searching_web'
+  | 'using_tool'
+  | 'checking_answer'
+  | 'responding'
+  | 'finished'
+  | 'stopped'
+  | 'error'
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system' | 'tool'

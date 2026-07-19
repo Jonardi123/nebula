@@ -9,6 +9,7 @@ const CODE_MODEL = 'qwen/qwen2.5-coder-14b'
 const TUNED_QWEN_MODEL = 'qwen2.5-coder-1.5b-v1'
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  experienceMode: 'simple',
   endpoint: 'http://localhost:1234/v1/chat/completions',
   modelProvider: 'lmstudio',
   nineRouterBaseUrl: 'http://localhost:20128/v1',
@@ -48,6 +49,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     review: 'openai-gpt-oss-20b-heretic-uncensored-neo-imatrix',
   },
   launcherIndexedFolders: [],
+  trustedAppAliases: {},
   maxAutoFetchPages: 2,
   memoryReviewMode: 'suggest',
   activeProjectProfileId: '',
@@ -55,14 +57,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
   modelRoutingSuggestions: true,
   notificationMode: 'in_app_tray',
   screenshotAskEnabled: true,
-  startupAnimation: 'cinematic',
+  startupAnimation: 'event_horizon',
   temperature: 0.25,
   maxTokens: 4096,
   projectFolder: '',
   memoryFolder: 'memory',
   requireApproval: false,
   riskyToolsEnabled: true,
-  actionMode: 'fast',
+  actionMode: 'safe',
   assistantHoldMs: 360,
   globalShortcutEnabled: true,
   launchAtStartup: true,
@@ -71,9 +73,20 @@ export const DEFAULT_SETTINGS: AppSettings = {
   voiceEnabled: true,
   voiceAutoStart: true,
   voiceLanguage: 'en-US',
+  voiceRecognitionMode: 'local_first',
+  voiceOnlineConsent: false,
+  voiceAutoSubmit: true,
+  voiceSilenceMs: 1200,
+  voiceSpeakReplies: true,
+  voiceSynthesisMode: 'neural_local',
+  voiceNeuralVoice: 'af_heart',
+  voiceSupertonicVoice: 'F1',
+  voiceSystemVoice: '',
+  voiceRate: 0.94,
+  voicePitch: 1.02,
   wakePhraseEnabled: false,
   wakePhrase: 'Nebula',
-  theme: 'dark',
+  theme: 'black_matter',
   profileAvatarMode: 'preset',
   profileAvatarPath: '',
   profileAvatarPreset: 'nova',
@@ -116,6 +129,16 @@ function readPermissionOverrides(value: unknown) {
   )
 }
 
+function readStringRecord(value: unknown) {
+  if (!isRecord(value)) return {}
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+      .map(([key, entry]) => [key.trim().toLowerCase(), entry.trim()])
+      .filter(([key, entry]) => Boolean(key && entry)),
+  )
+}
+
 function readEnum<T extends string>(value: unknown, allowed: readonly T[], fallback: T) {
   return typeof value === 'string' && allowed.includes(value as T) ? (value as T) : fallback
 }
@@ -125,6 +148,22 @@ function normalizeDailyModel(value: unknown, fallback: string) {
   if (!model) return fallback
   if (/^gemma$/i.test(model)) return DAILY_CHAT_MODEL
   return model
+}
+
+function readExecutionMode(value: unknown): AppSettings['actionMode'] {
+  if (value === 'approval' || value === 'strict') return 'approval'
+  if (value === 'safe' || value === 'fast' || value === 'guarded') return 'safe'
+  // Full Access is deliberately session-only and is never restored from storage.
+  if (value === 'full') return 'safe'
+  return DEFAULT_SETTINGS.actionMode
+}
+
+function readVisualTheme(value: unknown): AppSettings['theme'] {
+  if (value === 'original') return 'original'
+  if (value === 'black_matter') return 'black_matter'
+  // Legacy themes enter the Black Matter release on its new default theme.
+  if (value === 'dark' || value === 'darker') return 'black_matter'
+  return DEFAULT_SETTINGS.theme
 }
 
 function sanitizeSettings(value: unknown): AppSettings {
@@ -147,6 +186,7 @@ function sanitizeSettings(value: unknown): AppSettings {
     (!storedNineRouterModel.trim() || storedNineRouterModel === 'cx/gpt-5.4-mini')
 
   return {
+    experienceMode: readEnum(value.experienceMode, ['simple', 'advanced'] as const, DEFAULT_SETTINGS.experienceMode),
     endpoint: readString(value.endpoint, DEFAULT_SETTINGS.endpoint),
     modelProvider: accidentalRouterDefault ? 'lmstudio' : storedProvider,
     nineRouterBaseUrl: readString(value.nineRouterBaseUrl, DEFAULT_SETTINGS.nineRouterBaseUrl),
@@ -186,6 +226,7 @@ function sanitizeSettings(value: unknown): AppSettings {
       review: readString(assignments.review, DEFAULT_SETTINGS.modelAssignments.review),
     },
     launcherIndexedFolders: readStringArray(value.launcherIndexedFolders, DEFAULT_SETTINGS.launcherIndexedFolders),
+    trustedAppAliases: readStringRecord(value.trustedAppAliases),
     maxAutoFetchPages: Math.round(readNumber(value.maxAutoFetchPages, DEFAULT_SETTINGS.maxAutoFetchPages, 0, 8)),
     memoryReviewMode: readEnum(value.memoryReviewMode, ['suggest', 'auto', 'manual'] as const, DEFAULT_SETTINGS.memoryReviewMode),
     activeProjectProfileId: readString(value.activeProjectProfileId, DEFAULT_SETTINGS.activeProjectProfileId),
@@ -193,14 +234,14 @@ function sanitizeSettings(value: unknown): AppSettings {
     modelRoutingSuggestions: readBoolean(value.modelRoutingSuggestions, DEFAULT_SETTINGS.modelRoutingSuggestions),
     notificationMode: readEnum(value.notificationMode, ['in_app_tray'] as const, DEFAULT_SETTINGS.notificationMode),
     screenshotAskEnabled: readBoolean(value.screenshotAskEnabled, DEFAULT_SETTINGS.screenshotAskEnabled),
-    startupAnimation: readEnum(value.startupAnimation, ['cinematic', 'simple', 'off'] as const, DEFAULT_SETTINGS.startupAnimation),
+    startupAnimation: readEnum(value.startupAnimation, ['event_horizon', 'cinematic', 'simple', 'off'] as const, DEFAULT_SETTINGS.startupAnimation),
     temperature: readNumber(value.temperature, DEFAULT_SETTINGS.temperature, 0, 2),
     maxTokens: Math.round(readNumber(value.maxTokens, DEFAULT_SETTINGS.maxTokens, 64, 32768)),
     projectFolder: readString(value.projectFolder, DEFAULT_SETTINGS.projectFolder),
     memoryFolder: readString(value.memoryFolder, DEFAULT_SETTINGS.memoryFolder),
-    requireApproval: readBoolean(value.requireApproval, DEFAULT_SETTINGS.requireApproval),
+    requireApproval: readExecutionMode(value.actionMode) === 'approval',
     riskyToolsEnabled: readBoolean(value.riskyToolsEnabled, DEFAULT_SETTINGS.riskyToolsEnabled),
-    actionMode: readEnum(value.actionMode, ['fast', 'guarded', 'strict'] as const, DEFAULT_SETTINGS.actionMode),
+    actionMode: readExecutionMode(value.actionMode),
     assistantHoldMs: Math.round(readNumber(value.assistantHoldMs, DEFAULT_SETTINGS.assistantHoldMs, 120, 3000)),
     globalShortcutEnabled: readBoolean(value.globalShortcutEnabled, DEFAULT_SETTINGS.globalShortcutEnabled),
     launchAtStartup: readBoolean(value.launchAtStartup, DEFAULT_SETTINGS.launchAtStartup),
@@ -209,12 +250,23 @@ function sanitizeSettings(value: unknown): AppSettings {
     voiceEnabled: readBoolean(value.voiceEnabled, DEFAULT_SETTINGS.voiceEnabled),
     voiceAutoStart: readBoolean(value.voiceAutoStart, DEFAULT_SETTINGS.voiceAutoStart),
     voiceLanguage: readString(value.voiceLanguage, DEFAULT_SETTINGS.voiceLanguage),
+    voiceRecognitionMode: readEnum(value.voiceRecognitionMode, ['local_first', 'online', 'text_only'] as const, DEFAULT_SETTINGS.voiceRecognitionMode),
+    voiceOnlineConsent: readBoolean(value.voiceOnlineConsent, DEFAULT_SETTINGS.voiceOnlineConsent),
+    voiceAutoSubmit: readBoolean(value.voiceAutoSubmit, DEFAULT_SETTINGS.voiceAutoSubmit),
+    voiceSilenceMs: Math.round(readNumber(value.voiceSilenceMs, DEFAULT_SETTINGS.voiceSilenceMs, 500, 5000)),
+    voiceSpeakReplies: readBoolean(value.voiceSpeakReplies, DEFAULT_SETTINGS.voiceSpeakReplies),
+    voiceSynthesisMode: readEnum(value.voiceSynthesisMode, ['neural_local', 'supertonic', 'system'] as const, DEFAULT_SETTINGS.voiceSynthesisMode),
+    voiceNeuralVoice: readString(value.voiceNeuralVoice, DEFAULT_SETTINGS.voiceNeuralVoice),
+    voiceSupertonicVoice: readString(value.voiceSupertonicVoice, DEFAULT_SETTINGS.voiceSupertonicVoice),
+    voiceSystemVoice: readString(value.voiceSystemVoice, DEFAULT_SETTINGS.voiceSystemVoice),
+    voiceRate: readNumber(value.voiceRate, DEFAULT_SETTINGS.voiceRate, 0.5, 2),
+    voicePitch: readNumber(value.voicePitch, DEFAULT_SETTINGS.voicePitch, 0.5, 2),
     wakePhraseEnabled: readBoolean(value.wakePhraseEnabled, DEFAULT_SETTINGS.wakePhraseEnabled),
     wakePhrase: readString(value.wakePhrase, DEFAULT_SETTINGS.wakePhrase),
-    theme: readEnum(value.theme, ['dark', 'darker'] as const, DEFAULT_SETTINGS.theme),
+    theme: readVisualTheme(value.theme),
     profileAvatarMode: readEnum(value.profileAvatarMode, ['preset', 'image'] as const, DEFAULT_SETTINGS.profileAvatarMode),
     profileAvatarPath: readString(value.profileAvatarPath, DEFAULT_SETTINGS.profileAvatarPath),
-    profileAvatarPreset: readEnum(value.profileAvatarPreset, ['nova', 'aurora', 'eclipse', 'plasma'] as const, DEFAULT_SETTINGS.profileAvatarPreset),
+    profileAvatarPreset: readEnum(value.profileAvatarPreset, ['nova', 'aurora', 'plasma', 'prism', 'eclipse', 'event_horizon', 'singularity', 'void', 'ion', 'pulsar', 'quasar', 'vector'] as const, DEFAULT_SETTINGS.profileAvatarPreset),
     setupWizardCompleted: readBoolean(value.setupWizardCompleted, DEFAULT_SETTINGS.setupWizardCompleted),
     setupWizardLastRunAt: readString(value.setupWizardLastRunAt, DEFAULT_SETTINGS.setupWizardLastRunAt),
     overlayQuickActionsEnabled: readBoolean(value.overlayQuickActionsEnabled, DEFAULT_SETTINGS.overlayQuickActionsEnabled),

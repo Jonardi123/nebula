@@ -1,4 +1,4 @@
-import { Activity, BrainCircuit, Cpu, Gauge, Mic, RefreshCw } from 'lucide-react'
+import { Activity, BrainCircuit, Cpu, Gauge, Mic, RefreshCw, TerminalSquare } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { listLmStudioModelInfos } from '../lib/lmstudio'
 import { getRegisteredNebulaModels } from '../lib/modelOrchestrator'
@@ -6,6 +6,8 @@ import { getModelRunStats } from '../lib/modelStats'
 import { getOrchestratorDiagnostics, modelSwitchCount } from '../lib/orchestratorDiagnostics'
 import { getResourceSnapshot } from '../lib/resourceDiagnostics'
 import { getVoiceDiagnostics, runVoiceDiagnostics } from '../lib/voiceDiagnostics'
+import { getCommandHealth, getCommandJobs } from '../lib/commandRunner'
+import { getExecutionReceipts } from '../lib/executionReceipts'
 import type { ModelInfo, NebulaDiagnosticEvent, ResourceSnapshot, VoiceDiagnosticSnapshot } from '../types/nebula'
 import type { AppSettings } from '../types/settings'
 
@@ -27,6 +29,7 @@ export function DiagnosticsPanel({ settings }: Props) {
   const [resources, setResources] = useState<ResourceSnapshot | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [voice, setVoice] = useState<VoiceDiagnosticSnapshot | null>(() => getVoiceDiagnostics())
+  const [commandHealth, setCommandHealth] = useState<{ command: string; cwd: string; pid: number; status: string; startedAt: string } | null>(null)
   const stats = useMemo(() => getModelRunStats(), [events, models])
   const registry = useMemo(() => getRegisteredNebulaModels(settings), [settings])
   const routeEvents = events.filter((event) => event.type === 'route')
@@ -37,15 +40,17 @@ export function DiagnosticsPanel({ settings }: Props) {
   async function refresh() {
     setRefreshing(true)
     try {
-      const [nextModels, nextResources, nextVoice] = await Promise.all([
+      const [nextModels, nextResources, nextVoice, nextCommandHealth] = await Promise.all([
         listLmStudioModelInfos(settings).catch(() => []),
         getResourceSnapshot(),
         runVoiceDiagnostics(settings.voiceLanguage),
+        getCommandHealth().catch(() => null),
       ])
       setEvents(getOrchestratorDiagnostics())
       setModels(nextModels)
       setResources(nextResources)
       setVoice(nextVoice)
+      setCommandHealth(nextCommandHealth)
     } finally {
       setRefreshing(false)
     }
@@ -94,13 +99,32 @@ export function DiagnosticsPanel({ settings }: Props) {
       </section>
 
       <section className="rounded-md border border-white/10 bg-white/[0.035] p-3">
+        <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-100"><TerminalSquare size={15} />Terminal health</div>
+        <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-300">
+          <Metric label="Active process" value={commandHealth ? `${commandHealth.pid}` : 'none'} />
+          <Metric label="Status" value={commandHealth?.status ?? 'idle'} />
+          <Metric label="Working directory" value={commandHealth?.cwd ?? 'n/a'} />
+          <Metric label="Duration" value={commandHealth ? `${Math.max(0, Math.round((Date.now() - new Date(commandHealth.startedAt).getTime()) / 1000))} s` : 'n/a'} />
+          <Metric label="Output truncated" value={getCommandJobs().some((job) => job.truncated) ? 'yes' : 'no'} />
+          <Metric label="Cancelled jobs" value={getCommandJobs().filter((job) => job.status === 'cancelled').length.toString()} />
+          <Metric label="Receipts" value={getExecutionReceipts().length.toString()} />
+          <Metric label="Last failure" value={getCommandJobs().find((job) => job.status === 'failed' || job.status === 'timed_out')?.stderr.slice(0, 80) || 'none'} />
+        </div>
+        {commandHealth?.command && <div className="terminal-font mt-3 break-all text-[10px] text-slate-400">{commandHealth.command}</div>}
+      </section>
+
+      <section className="rounded-md border border-white/10 bg-white/[0.035] p-3">
         <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-100"><Mic size={15} />Voice reliability</div>
         <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-300">
           <Metric label="Recognition" value={voice?.supported ? 'supported' : 'unavailable'} />
           <Metric label="Microphone" value={voice?.permission ?? 'unknown'} />
           <Metric label="Language" value={voice?.language ?? settings.voiceLanguage} />
+          <Metric label="Engine" value={voice?.engine?.replaceAll('_', ' ') ?? 'not selected'} />
+          <Metric label="Local model" value={voice?.localAvailability ?? 'unknown'} />
+          <Metric label="Recognition latency" value={formatMs(voice?.recognitionLatencyMs)} />
           <Metric label="Last transcript" value={voice?.lastTranscriptAt ? new Date(voice.lastTranscriptAt).toLocaleString() : 'none'} />
         </div>
+        {voice?.lastTranscriptPreview && <div className="mt-3 text-[11px] leading-4 text-slate-400">Last heard: {voice.lastTranscriptPreview}</div>}
         {voice?.lastError && <div className="mt-3 text-[11px] leading-4 text-red-200">{voice.lastError}</div>}
       </section>
 

@@ -1,16 +1,16 @@
 use base64::{engine::general_purpose, Engine as _};
 use serde::Serialize;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::fs;
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager,
+    AppHandle, Emitter, Manager,
 };
 
 mod mobile_bridge;
@@ -34,11 +34,48 @@ struct ProjectSearchResult {
     match_count: usize,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct CommandOutput {
     code: Option<i32>,
     stdout: String,
     stderr: String,
+    job_id: Option<String>,
+    truncated: bool,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CommandEvent {
+    job_id: String,
+    #[serde(rename = "type")]
+    event_type: String,
+    stream: Option<String>,
+    data: Option<String>,
+    code: Option<i32>,
+    created_at: String,
+    truncated: bool,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CommandJobState {
+    id: String,
+    command: String,
+    cwd: String,
+    pid: u32,
+    status: String,
+    started_at: String,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct InstalledAppRecord {
+    id: String,
+    name: String,
+    path: String,
+    source: String,
+    aliases: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -75,6 +112,118 @@ const MAX_AVATAR_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_PROJECT_SEARCH_FILE_BYTES: u64 = 1024 * 1024;
 const MAX_PROJECT_SEARCH_FILES: usize = 2500;
 static RUNNING_COMMAND_PID: Mutex<Option<u32>> = Mutex::new(None);
+static RUNNING_COMMAND_META: Mutex<Option<CommandJobState>> = Mutex::new(None);
+static CANCELLED_COMMAND_PID: Mutex<Option<u32>> = Mutex::new(None);
+
+fn unix_timestamp_ms() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .to_string()
+}
+
+fn command_is_permanently_blocked(command: &str) -> bool {
+    let normalized = command.to_lowercase();
+    let compact = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
+    compact.contains("diskpart")
+        || compact.starts_with("format ")
+        || compact.contains("set-mppreference") && compact.contains("disable")
+        || compact.contains("disablerealtimemonitoring")
+        || compact.contains("mimikatz")
+        || compact.contains("procdump") && compact.contains("lsass")
+        || compact.contains("password dump")
+        || compact.contains("credential dump")
+        || compact.contains("del c:\\windows")
+        || compact.contains("remove-item c:\\windows")
+        || compact.contains("rmdir /s c:\\")
+        || compact.contains("invoke-webrequest") && compact.contains("invoke-expression")
+        || compact.contains("curl ") && (compact.contains("| powershell") || compact.contains("| pwsh") || compact.contains("| cmd"))
+        || (compact.contains("powershell") || compact.contains("pwsh") || compact.contains("start-process")) && compact.contains("windowstyle hidden")
+        || (compact.contains("wscript.exe") || compact.contains("cscript.exe")) && compact.contains("/b")
+}
+
+fn supertonic_synthesize_blocking(text: String, voice: String, speed: f64) -> Result<String, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err("There is no text to speak.".into());
+    }
+    if trimmed.chars().count() > 1_200 {
+        return Err("Supertonic replies are limited to 1,200 characters.".into());
+    }
+    let allowed_voices = ["F1", "F2", "F3", "F4", "F5", "M1", "M2", "M3", "M4", "M5"];
+    if !allowed_voices.contains(&voice.as_str()) {
+        return Err("Unknown Supertonic voice.".into());
+    }
+
+    let local_app_data = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .ok_or_else(|| "Windows local application data is unavailable.".to_string())?;
+    let python = local_app_data
+        .join("Nebula")
+        .join("runtimes")
+        .join("supertonic")
+        .join("Scripts")
+        .join("python.exe");
+    if !python.is_file() {
+        return Err("Supertonic is not installed. Choose Nebula Neural or a Windows voice instead.".into());
+    }
+
+    let output_path = std::env::temp_dir().join(format!("nebula-supertonic-{}.wav", uuid::Uuid::new_v4()));
+    let script = "from supertonic import TTS; import sys; t=TTS(auto_download=True); w,_=t.synthesize(sys.argv[1],t.get_voice_style(sys.argv[2]),total_steps=8,speed=float(sys.argv[3]),lang='en'); t.save_audio(w,sys.argv[4])";
+    let speed_arg = speed.clamp(0.7, 1.3).to_string();
+    let output_arg = output_path.to_string_lossy().to_string();
+    let mut child = Command::new(&python)
+        .args([
+            "-c",
+            script,
+            trimmed,
+            &voice,
+            &speed_arg,
+            &output_arg,
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Supertonic could not start: {error}"))?;
+
+    let started = std::time::Instant::now();
+    let timed_out = loop {
+        if child.try_wait().map_err(|error| error.to_string())?.is_some() {
+            break false;
+        }
+        if started.elapsed() >= Duration::from_secs(180) {
+            let _ = child.kill();
+            break true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let output = child.wait_with_output().map_err(|error| error.to_string())?;
+    if timed_out {
+        let _ = fs::remove_file(&output_path);
+        return Err("Supertonic took too long to generate speech.".into());
+    }
+    if !output.status.success() {
+        let details = truncate_bytes(&output.stderr, 2_000);
+        let _ = fs::remove_file(&output_path);
+        return Err(if details.trim().is_empty() {
+            "Supertonic could not generate speech.".into()
+        } else {
+            format!("Supertonic could not generate speech: {details}")
+        });
+    }
+
+    let audio = fs::read(&output_path).map_err(|error| format!("Supertonic audio could not be read: {error}"))?;
+    let _ = fs::remove_file(&output_path);
+    Ok(general_purpose::STANDARD.encode(audio))
+}
+
+#[tauri::command]
+async fn supertonic_synthesize(text: String, voice: String, speed: f64) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || supertonic_synthesize_blocking(text, voice, speed))
+        .await
+        .map_err(|error| error.to_string())?
+}
 
 fn memory_path(memory_folder: &str, file: &str) -> Result<PathBuf, String> {
     let allowed = [
@@ -540,6 +689,9 @@ fn run_command_blocking(command: String, cwd: String) -> Result<CommandOutput, S
     if command.trim().is_empty() {
         return Err("Command is empty.".into());
     }
+    if command_is_permanently_blocked(&command) {
+        return Err("Command blocked by Nebula's permanent catastrophic-action guard.".into());
+    }
 
     let working_dir = if cwd.is_empty() {
         PathBuf::from(".")
@@ -629,6 +781,8 @@ fn run_command_blocking(command: String, cwd: String) -> Result<CommandOutput, S
         code: output.status.code(),
         stdout: truncate_bytes(&output.stdout, MAX_COMMAND_OUTPUT_BYTES),
         stderr,
+        job_id: None,
+        truncated: output.stdout.len() > MAX_COMMAND_OUTPUT_BYTES || output.stderr.len() > MAX_COMMAND_OUTPUT_BYTES,
     })
 }
 
@@ -637,6 +791,171 @@ async fn run_command(command: String, cwd: String) -> Result<CommandOutput, Stri
     tauri::async_runtime::spawn_blocking(move || run_command_blocking(command, cwd))
         .await
         .map_err(|error| error.to_string())?
+}
+
+fn append_command_output(target: &Arc<Mutex<String>>, line: &str, truncated: &Arc<Mutex<bool>>) {
+    if let Ok(mut output) = target.lock() {
+        if output.len() >= MAX_COMMAND_OUTPUT_BYTES {
+            if let Ok(mut flag) = truncated.lock() { *flag = true; }
+            return;
+        }
+        let remaining = MAX_COMMAND_OUTPUT_BYTES - output.len();
+        if line.len() > remaining {
+            let boundary = line
+                .char_indices()
+                .map(|(index, _)| index)
+                .take_while(|index| *index <= remaining)
+                .last()
+                .unwrap_or(0);
+            output.push_str(&line[..boundary]);
+            if let Ok(mut flag) = truncated.lock() { *flag = true; }
+        } else {
+            output.push_str(line);
+        }
+    }
+}
+
+fn emit_command_event(app: &AppHandle, event: CommandEvent) {
+    let _ = app.emit("nebula-command-event", event);
+}
+
+#[tauri::command]
+fn start_command(app: AppHandle, job_id: String, command: String, cwd: String) -> Result<CommandJobState, String> {
+    if job_id.trim().is_empty() || command.trim().is_empty() {
+        return Err("Command job id and command are required.".into());
+    }
+    if command_is_permanently_blocked(&command) {
+        return Err("Command blocked by Nebula's permanent catastrophic-action guard.".into());
+    }
+    let working_dir = if cwd.trim().is_empty() { PathBuf::from(".") } else { PathBuf::from(&cwd) };
+    if !working_dir.exists() {
+        return Err(format!("Working directory does not exist: {}", working_dir.to_string_lossy()));
+    }
+    {
+        let guard = RUNNING_COMMAND_PID.lock().map_err(|_| "Command runner state is unavailable.".to_string())?;
+        if guard.is_some() {
+            return Err("A command is already running. Stop it before starting another command.".into());
+        }
+    }
+
+    let mut command_builder = if cfg!(target_os = "windows") {
+        let mut builder = Command::new("cmd");
+        builder.args(["/C", &command]);
+        builder
+    } else {
+        let mut builder = Command::new("sh");
+        builder.args(["-c", &command]);
+        builder
+    };
+    let mut child = command_builder
+        .current_dir(&working_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Command could not start: {error}"))?;
+    let pid = child.id();
+    let started_at = unix_timestamp_ms();
+    let state = CommandJobState {
+        id: job_id.clone(),
+        command: command.clone(),
+        cwd: working_dir.to_string_lossy().to_string(),
+        pid,
+        status: "running".into(),
+        started_at: started_at.clone(),
+    };
+    *RUNNING_COMMAND_PID.lock().map_err(|_| "Command runner state is unavailable.".to_string())? = Some(pid);
+    *RUNNING_COMMAND_META.lock().map_err(|_| "Command runner state is unavailable.".to_string())? = Some(state.clone());
+    *CANCELLED_COMMAND_PID.lock().map_err(|_| "Command runner state is unavailable.".to_string())? = None;
+
+    emit_command_event(&app, CommandEvent {
+        job_id: job_id.clone(), event_type: "started".into(), stream: Some("system".into()),
+        data: Some(format!("{command}\n")), code: None, created_at: started_at, truncated: false,
+    });
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let stdout_text = Arc::new(Mutex::new(String::new()));
+    let stderr_text = Arc::new(Mutex::new(String::new()));
+    let truncated = Arc::new(Mutex::new(false));
+
+    let spawn_reader = |reader: Option<std::process::ChildStdout>, stream: &'static str, target: Arc<Mutex<String>>| {
+        let app = app.clone();
+        let job_id = job_id.clone();
+        let truncated = truncated.clone();
+        reader.map(|pipe| std::thread::spawn(move || {
+            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+                let line = format!("{line}\n");
+                append_command_output(&target, &line, &truncated);
+                emit_command_event(&app, CommandEvent {
+                    job_id: job_id.clone(), event_type: "output".into(), stream: Some(stream.into()),
+                    data: Some(line), code: None, created_at: unix_timestamp_ms(),
+                    truncated: truncated.lock().map(|value| *value).unwrap_or(false),
+                });
+            }
+        }))
+    };
+    let stdout_thread = spawn_reader(stdout, "stdout", stdout_text.clone());
+    let stderr_thread = stderr.map(|pipe| {
+        let app = app.clone();
+        let job_id = job_id.clone();
+        let target = stderr_text.clone();
+        let truncated = truncated.clone();
+        std::thread::spawn(move || {
+            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+                let line = format!("{line}\n");
+                append_command_output(&target, &line, &truncated);
+                emit_command_event(&app, CommandEvent {
+                    job_id: job_id.clone(), event_type: "output".into(), stream: Some("stderr".into()),
+                    data: Some(line), code: None, created_at: unix_timestamp_ms(),
+                    truncated: truncated.lock().map(|value| *value).unwrap_or(false),
+                });
+            }
+        })
+    });
+
+    let worker_app = app.clone();
+    let worker_job_id = job_id.clone();
+    std::thread::spawn(move || {
+        let started = std::time::Instant::now();
+        let (status, code) = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break ("completed", status.code()),
+                Ok(None) if started.elapsed() >= COMMAND_TIMEOUT => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break ("timed_out", None);
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+                Err(_) => break ("error", None),
+            }
+        };
+        if let Some(thread) = stdout_thread { let _ = thread.join(); }
+        if let Some(thread) = stderr_thread { let _ = thread.join(); }
+        let cancelled = CANCELLED_COMMAND_PID.lock().map(|value| *value == Some(pid)).unwrap_or(false);
+        let final_type = if cancelled { "cancelled" } else { status };
+        let out = stdout_text.lock().map(|value| value.clone()).unwrap_or_default();
+        let err = stderr_text.lock().map(|value| value.clone()).unwrap_or_default();
+        let was_truncated = truncated.lock().map(|value| *value).unwrap_or(false);
+        emit_command_event(&worker_app, CommandEvent {
+            job_id: worker_job_id,
+            event_type: final_type.into(),
+            stream: Some("system".into()),
+            data: Some(serde_json::json!({"stdout":out,"stderr":err}).to_string()),
+            code,
+            created_at: unix_timestamp_ms(),
+            truncated: was_truncated,
+        });
+        if let Ok(mut value) = RUNNING_COMMAND_PID.lock() { if *value == Some(pid) { *value = None; } }
+        if let Ok(mut value) = RUNNING_COMMAND_META.lock() { if value.as_ref().is_some_and(|item| item.pid == pid) { *value = None; } }
+        if let Ok(mut value) = CANCELLED_COMMAND_PID.lock() { if *value == Some(pid) { *value = None; } }
+    });
+
+    Ok(state)
+}
+
+#[tauri::command]
+fn command_health() -> Result<Option<CommandJobState>, String> {
+    RUNNING_COMMAND_META.lock().map(|value| value.clone()).map_err(|_| "Command runner state is unavailable.".to_string())
 }
 
 #[tauri::command]
@@ -651,6 +970,7 @@ fn stop_running_command() -> Result<(), String> {
     let Some(pid) = pid else {
         return Ok(());
     };
+    if let Ok(mut cancelled) = CANCELLED_COMMAND_PID.lock() { *cancelled = Some(pid); }
 
     let output = if cfg!(target_os = "windows") {
         Command::new("taskkill.exe")
@@ -663,15 +983,6 @@ fn stop_running_command() -> Result<(), String> {
             .output()
             .map_err(|error| error.to_string())?
     };
-
-    {
-        let mut guard = RUNNING_COMMAND_PID
-            .lock()
-            .map_err(|_| "Command runner state is unavailable.".to_string())?;
-        if *guard == Some(pid) {
-            *guard = None;
-        }
-    }
 
     if !output.status.success() {
         let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -816,26 +1127,125 @@ fn sleep_pc() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn open_app(app: String) -> Result<(), String> {
-    let normalized = app.to_lowercase();
-    let target = match normalized.as_str() {
-        "notepad" => "notepad.exe",
-        "calculator" | "calc" => "calc.exe",
-        "cmd" => "cmd.exe",
-        "powershell" => "powershell.exe",
-        "explorer" => "explorer.exe",
-        _ => return Err("Unknown app path. Approval and explicit implementation required.".into()),
-    };
+fn list_installed_apps() -> Result<Vec<InstalledAppRecord>, String> {
+    let mut apps = vec![
+        InstalledAppRecord { id: "built-in:notepad".into(), name: "Notepad".into(), path: "notepad.exe".into(), source: "built_in".into(), aliases: vec!["notepad".into(), "text editor".into()] },
+        InstalledAppRecord { id: "built-in:calculator".into(), name: "Calculator".into(), path: "calc.exe".into(), source: "built_in".into(), aliases: vec!["calculator".into(), "calc".into()] },
+        InstalledAppRecord { id: "built-in:explorer".into(), name: "File Explorer".into(), path: "explorer.exe".into(), source: "built_in".into(), aliases: vec!["explorer".into(), "file explorer".into(), "files".into()] },
+        InstalledAppRecord { id: "built-in:cmd".into(), name: "Command Prompt".into(), path: "cmd.exe".into(), source: "built_in".into(), aliases: vec!["cmd".into(), "command prompt".into()] },
+        InstalledAppRecord { id: "built-in:powershell".into(), name: "PowerShell".into(), path: "powershell.exe".into(), source: "built_in".into(), aliases: vec!["powershell".into(), "terminal".into()] },
+        InstalledAppRecord { id: "built-in:settings".into(), name: "Windows Settings".into(), path: "ms-settings:".into(), source: "built_in".into(), aliases: vec!["settings".into(), "windows settings".into()] },
+    ];
 
-    Command::new(target)
-        .spawn()
-        .map_err(|error| error.to_string())?;
-    Ok(())
+    let mut roots = Vec::new();
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        roots.push(PathBuf::from(appdata).join("Microsoft").join("Windows").join("Start Menu").join("Programs"));
+    }
+    if let Ok(program_data) = std::env::var("PROGRAMDATA") {
+        roots.push(PathBuf::from(program_data).join("Microsoft").join("Windows").join("Start Menu").join("Programs"));
+    }
+
+    fn collect_start_menu(path: &Path, apps: &mut Vec<InstalledAppRecord>, depth: usize) {
+        if depth > 5 || apps.len() >= 1200 { return; }
+        let Ok(entries) = fs::read_dir(path) else { return; };
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_start_menu(&path, apps, depth + 1);
+                continue;
+            }
+            let extension = path.extension().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase();
+            if extension != "lnk" && extension != "exe" { continue; }
+            let Some(name) = path.file_stem().and_then(|value| value.to_str()).map(str::trim).filter(|value| !value.is_empty()) else { continue; };
+            let lower = name.to_ascii_lowercase();
+            if lower.contains("uninstall") || lower.contains("readme") { continue; }
+            apps.push(InstalledAppRecord {
+                id: format!("start-menu:{}", path.to_string_lossy()),
+                name: name.to_string(),
+                path: path.to_string_lossy().to_string(),
+                source: "start_menu".into(),
+                aliases: vec![lower],
+            });
+        }
+    }
+    for root in roots { collect_start_menu(&root, &mut apps, 0); }
+
+    if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
+        let lm_studio = PathBuf::from(local_appdata).join("Programs").join("LM Studio").join("LM Studio.exe");
+        if lm_studio.is_file() {
+            apps.push(InstalledAppRecord { id: "detected:lm-studio".into(), name: "LM Studio".into(), path: lm_studio.to_string_lossy().to_string(), source: "built_in".into(), aliases: vec!["lm studio".into(), "lmstudio".into()] });
+        }
+    }
+
+    let mut seen = HashSet::new();
+    apps.retain(|app| seen.insert(format!("{}|{}", app.name.to_ascii_lowercase(), app.path.to_ascii_lowercase())));
+    apps.sort_by(|left, right| left.name.to_ascii_lowercase().cmp(&right.name.to_ascii_lowercase()));
+    Ok(apps)
+}
+
+fn launch_installed_app(app: &InstalledAppRecord) -> Result<(), String> {
+    if app.path == "ms-settings:" {
+        return Command::new("explorer.exe").arg(&app.path).spawn().map(|_| ()).map_err(|error| error.to_string());
+    }
+    let path = PathBuf::from(&app.path);
+    if path.extension().and_then(|value| value.to_str()).is_some_and(|value| value.eq_ignore_ascii_case("lnk")) {
+        return Command::new("explorer.exe").arg(&app.path).spawn().map(|_| ()).map_err(|error| error.to_string());
+    }
+    Command::new(&app.path).spawn().map(|_| ()).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-fn open_known_app(app: String) -> Result<(), String> {
-    open_app(app)
+fn open_app(app: String) -> Result<(), String> {
+    let query = app.trim().to_ascii_lowercase();
+    if query.is_empty() { return Err("App name is empty.".into()); }
+    let apps = list_installed_apps()?;
+    let mut exact = apps.iter().filter(|candidate| {
+        candidate.name.eq_ignore_ascii_case(&query) || candidate.aliases.iter().any(|alias| alias.eq_ignore_ascii_case(&query))
+    }).collect::<Vec<_>>();
+    if exact.is_empty() {
+        exact = apps.iter().filter(|candidate| candidate.name.to_ascii_lowercase().contains(&query)).collect();
+    }
+    if exact.len() > 1 {
+        let names = exact.iter().take(6).map(|candidate| candidate.name.as_str()).collect::<Vec<_>>().join(", ");
+        return Err(format!("More than one installed app matches '{app}': {names}. Use a more specific name."));
+    }
+    if let Some(found) = exact.first() { return launch_installed_app(found); }
+
+    let explicit = PathBuf::from(app.trim());
+    let extension = explicit.extension().and_then(|value| value.to_str()).unwrap_or_default();
+    if explicit.is_file() && ["exe", "lnk"].iter().any(|allowed| extension.eq_ignore_ascii_case(allowed)) {
+        return launch_installed_app(&InstalledAppRecord { id: "explicit".into(), name: explicit.file_stem().unwrap_or_default().to_string_lossy().to_string(), path: explicit.to_string_lossy().to_string(), source: "custom".into(), aliases: vec![] });
+    }
+    Err(format!("Nebula could not find an installed app matching '{app}'."))
+}
+
+#[tauri::command]
+  fn open_known_app(app: String) -> Result<(), String> {
+      open_app(app)
+  }
+
+  #[tauri::command]
+  fn open_windows_settings() -> Result<(), String> {
+      Command::new("explorer.exe")
+          .arg("ms-settings:")
+          .spawn()
+          .map_err(|error| format!("Could not open Windows Settings: {error}"))?;
+      Ok(())
+  }
+
+#[tauri::command]
+fn open_voice_privacy_settings(kind: String) -> Result<(), String> {
+    let uri = match kind.as_str() {
+        "microphone" => "ms-settings:privacy-microphone",
+        "speech" => "ms-settings:privacy-speechtyping",
+        _ => return Err("Unknown voice privacy settings page.".into()),
+    };
+
+    Command::new("explorer.exe")
+        .arg(uri)
+        .spawn()
+        .map_err(|error| format!("Could not open Windows voice settings: {error}"))?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1138,6 +1548,53 @@ fn handle_mobile_pairing_cli(app: &AppHandle, args: &[String]) -> bool {
     true
 }
 
+#[cfg(test)]
+mod command_policy_tests {
+    use super::*;
+
+    #[test]
+    fn permanent_guard_blocks_catastrophic_and_hidden_commands() {
+        let blocked = [
+            "format C: /q",
+            "diskpart /s wipe.txt",
+            "del C:\\Windows\\System32",
+            "powershell -WindowStyle Hidden -Command whoami",
+            "wscript.exe /b payload.vbs",
+            "procdump -ma lsass.exe",
+        ];
+
+        for command in blocked {
+            assert!(
+                command_is_permanently_blocked(command),
+                "expected permanent block for {command}"
+            );
+        }
+    }
+
+    #[test]
+    fn permanent_guard_keeps_normal_project_commands_available() {
+        for command in ["git status", "npm test", "cargo check", "dir src"] {
+            assert!(
+                !command_is_permanently_blocked(command),
+                "unexpected permanent block for {command}"
+            );
+        }
+    }
+
+    #[test]
+    fn command_output_cap_preserves_utf8_boundaries() {
+        let output = Arc::new(Mutex::new("x".repeat(MAX_COMMAND_OUTPUT_BYTES - 2)));
+        let truncated = Arc::new(Mutex::new(false));
+
+        append_command_output(&output, "\u{2603}\n", &truncated);
+
+        let value = output.lock().expect("output lock");
+        assert!(value.is_char_boundary(value.len()));
+        assert!(value.len() <= MAX_COMMAND_OUTPUT_BYTES);
+        assert!(*truncated.lock().expect("truncated lock"));
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -1211,13 +1668,19 @@ pub fn run() {
             write_memory,
             search_memory,
             run_command,
+            start_command,
+            command_health,
             stop_running_command,
             get_system_info,
             get_resource_snapshot,
             capture_screen,
             sleep_pc,
-            open_app,
-            open_known_app,
+              open_app,
+              open_known_app,
+              list_installed_apps,
+              open_windows_settings,
+              open_voice_privacy_settings,
+            supertonic_synthesize,
             open_path_in_explorer,
             show_tray_notification,
             lmstudio_list_models,

@@ -568,8 +568,17 @@ fn write_conversation_store(tx: &Transaction<'_>, store: &Value) -> Result<usize
     Ok(count)
 }
 
-#[tauri::command]
-pub fn storage_initialize(app: AppHandle) -> Result<RecoveryNotice, String> {
+async fn run_storage_task<T, F>(task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(task)
+        .await
+        .map_err(|error| format!("Storage worker failed: {error}"))?
+}
+
+fn storage_initialize_blocking(app: AppHandle) -> Result<RecoveryNotice, String> {
     let connection = open(&app)?;
     let previous: Option<String> = connection
         .query_row(
@@ -600,7 +609,11 @@ pub fn storage_initialize(app: AppHandle) -> Result<RecoveryNotice, String> {
 }
 
 #[tauri::command]
-pub fn storage_close_session(app: AppHandle) -> Result<(), String> {
+pub async fn storage_initialize(app: AppHandle) -> Result<RecoveryNotice, String> {
+    run_storage_task(move || storage_initialize_blocking(app)).await
+}
+
+fn storage_close_session_blocking(app: AppHandle) -> Result<(), String> {
     let connection = open(&app)?;
     connection
         .execute(
@@ -612,7 +625,11 @@ pub fn storage_close_session(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn storage_load_conversations(app: AppHandle) -> Result<Option<Value>, String> {
+pub async fn storage_close_session(app: AppHandle) -> Result<(), String> {
+    run_storage_task(move || storage_close_session_blocking(app)).await
+}
+
+fn storage_load_conversations_blocking(app: AppHandle) -> Result<Option<Value>, String> {
     let connection = open(&app)?;
     let count: i64 = connection
         .query_row("SELECT COUNT(*) FROM conversations", [], |row| row.get(0))
@@ -667,7 +684,11 @@ pub fn storage_load_conversations(app: AppHandle) -> Result<Option<Value>, Strin
 }
 
 #[tauri::command]
-pub fn storage_save_conversations(app: AppHandle, store: Value) -> Result<usize, String> {
+pub async fn storage_load_conversations(app: AppHandle) -> Result<Option<Value>, String> {
+    run_storage_task(move || storage_load_conversations_blocking(app)).await
+}
+
+fn storage_save_conversations_blocking(app: AppHandle, store: Value) -> Result<usize, String> {
     let mut connection = open(&app)?;
     let tx = connection
         .transaction()
@@ -678,13 +699,26 @@ pub fn storage_save_conversations(app: AppHandle, store: Value) -> Result<usize,
 }
 
 #[tauri::command]
-pub fn storage_search_conversations(
+pub async fn storage_save_conversations(app: AppHandle, store: Value) -> Result<usize, String> {
+    run_storage_task(move || storage_save_conversations_blocking(app, store)).await
+}
+
+fn storage_search_conversations_blocking(
     app: AppHandle,
     query: String,
     limit: Option<usize>,
 ) -> Result<Vec<Value>, String> {
     let connection = open(&app)?;
     search_conversation_rows(&connection, &query, limit.unwrap_or(40).min(100))
+}
+
+#[tauri::command]
+pub async fn storage_search_conversations(
+    app: AppHandle,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<Value>, String> {
+    run_storage_task(move || storage_search_conversations_blocking(app, query, limit)).await
 }
 
 fn search_conversation_rows(
@@ -731,8 +765,7 @@ fn search_conversation_rows(
         .collect())
 }
 
-#[tauri::command]
-pub fn storage_put_document(
+fn storage_put_document_blocking(
     app: AppHandle,
     namespace: String,
     id: String,
@@ -748,7 +781,16 @@ pub fn storage_put_document(
 }
 
 #[tauri::command]
-pub fn storage_get_document(
+pub async fn storage_put_document(
+    app: AppHandle,
+    namespace: String,
+    id: String,
+    value: Value,
+) -> Result<(), String> {
+    run_storage_task(move || storage_put_document_blocking(app, namespace, id, value)).await
+}
+
+fn storage_get_document_blocking(
     app: AppHandle,
     namespace: String,
     id: String,
@@ -767,7 +809,15 @@ pub fn storage_get_document(
 }
 
 #[tauri::command]
-pub fn storage_list_documents(
+pub async fn storage_get_document(
+    app: AppHandle,
+    namespace: String,
+    id: String,
+) -> Result<Option<Value>, String> {
+    run_storage_task(move || storage_get_document_blocking(app, namespace, id)).await
+}
+
+fn storage_list_documents_blocking(
     app: AppHandle,
     namespace: String,
 ) -> Result<Vec<DocumentRecord>, String> {
@@ -790,7 +840,14 @@ pub fn storage_list_documents(
 }
 
 #[tauri::command]
-pub fn storage_delete_document(
+pub async fn storage_list_documents(
+    app: AppHandle,
+    namespace: String,
+) -> Result<Vec<DocumentRecord>, String> {
+    run_storage_task(move || storage_list_documents_blocking(app, namespace)).await
+}
+
+fn storage_delete_document_blocking(
     app: AppHandle,
     namespace: String,
     id: String,
@@ -802,6 +859,15 @@ pub fn storage_delete_document(
         )
         .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn storage_delete_document(
+    app: AppHandle,
+    namespace: String,
+    id: String,
+) -> Result<(), String> {
+    run_storage_task(move || storage_delete_document_blocking(app, namespace, id)).await
 }
 
 fn retain_backups(directory: &Path) {
@@ -822,8 +888,7 @@ fn retain_backups(directory: &Path) {
     }
 }
 
-#[tauri::command]
-pub fn storage_migrate_legacy(
+fn storage_migrate_legacy_blocking(
     app: AppHandle,
     entries: Vec<LegacyEntry>,
 ) -> Result<StorageMigrationReport, String> {
@@ -915,7 +980,14 @@ pub fn storage_migrate_legacy(
 }
 
 #[tauri::command]
-pub fn storage_export_diagnostics(app: AppHandle, payload: Value) -> Result<String, String> {
+pub async fn storage_migrate_legacy(
+    app: AppHandle,
+    entries: Vec<LegacyEntry>,
+) -> Result<StorageMigrationReport, String> {
+    run_storage_task(move || storage_migrate_legacy_blocking(app, entries)).await
+}
+
+fn storage_export_diagnostics_blocking(app: AppHandle, payload: Value) -> Result<String, String> {
     fn redact(value: &mut Value) {
         match value {
             Value::Object(map) => {
@@ -946,6 +1018,11 @@ pub fn storage_export_diagnostics(app: AppHandle, payload: Value) -> Result<Stri
     )
     .map_err(|error| error.to_string())?;
     Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn storage_export_diagnostics(app: AppHandle, payload: Value) -> Result<String, String> {
+    run_storage_task(move || storage_export_diagnostics_blocking(app, payload)).await
 }
 
 #[cfg(test)]

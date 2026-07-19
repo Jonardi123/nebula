@@ -8,7 +8,8 @@ import type { LogEvent } from '../types/agent'
 import type { AgentStatus } from '../types/agent'
 import type { ConversationFolder, ConversationSearchResult, ConversationSession, WorkspaceAwarenessSnapshot } from '../types/nebula'
 import { conversationRepository } from '../lib/storage'
-import type { AppSettings, ProfileAvatarPreset } from '../types/settings'
+import type { AppSettings, ProfileAvatarCategory, ProfileAvatarPreset } from '../types/settings'
+import type { AvatarPreset } from '../types/execution'
 import { FileTree } from './FileTree'
 
 const AgentActivityPanel = lazy(() => import('./AgentActivityPanel').then((module) => ({ default: module.AgentActivityPanel })))
@@ -155,11 +156,19 @@ const tabGroups: Array<{ label: string; items: { id: SidebarTab; label: string; 
   },
 ]
 
-const avatarPresets: Array<{ id: ProfileAvatarPreset; label: string; description: string }> = [
-  { id: 'nova', label: 'Nova', description: 'Focused stellar core' },
-  { id: 'aurora', label: 'Aurora', description: 'Flowing polar light' },
-  { id: 'eclipse', label: 'Eclipse', description: 'Dark orbit and corona' },
-  { id: 'plasma', label: 'Plasma', description: 'Electric cosmic cloud' },
+const avatarPresets: AvatarPreset[] = [
+  { id: 'nova', name: 'Nova', category: 'nebula_originals', description: 'Focused stellar core' },
+  { id: 'aurora', name: 'Aurora', category: 'nebula_originals', description: 'Flowing polar light' },
+  { id: 'plasma', name: 'Plasma', category: 'nebula_originals', description: 'Electric cosmic cloud' },
+  { id: 'prism', name: 'Prism', category: 'nebula_originals', description: 'Spectral nebula glass' },
+  { id: 'eclipse', name: 'Eclipse', category: 'black_matter', description: 'Dark orbit and corona' },
+  { id: 'event_horizon', name: 'Event Horizon', category: 'black_matter', description: 'Luminous accretion ring' },
+  { id: 'singularity', name: 'Singularity', category: 'black_matter', description: 'Compressed ultraviolet core' },
+  { id: 'void', name: 'Void', category: 'black_matter', description: 'Quiet graphite depth' },
+  { id: 'ion', name: 'Ion', category: 'signals', description: 'Charged cyan pulse' },
+  { id: 'pulsar', name: 'Pulsar', category: 'signals', description: 'Twin-beam signal' },
+  { id: 'quasar', name: 'Quasar', category: 'signals', description: 'High-energy beacon' },
+  { id: 'vector', name: 'Vector', category: 'signals', description: 'Directed signal field' },
 ]
 
 export function Sidebar({
@@ -197,6 +206,7 @@ export function Sidebar({
   const [localTab, setLocalTab] = useState<SidebarTab | null>(null)
   const [avatarOpen, setAvatarOpen] = useState(false)
   const [avatarDataUrl, setAvatarDataUrl] = useState('')
+  const [avatarCategory, setAvatarCategory] = useState<ProfileAvatarCategory>('black_matter')
   const [conversationQuery, setConversationQuery] = useState('')
   const [conversationMatches, setConversationMatches] = useState<ConversationSearchResult[]>([])
   const [folderFilter, setFolderFilter] = useState('all')
@@ -207,6 +217,7 @@ export function Sidebar({
   const avatarMenuRef = useRef<HTMLDivElement | null>(null)
   const onLogRef = useRef(onLog)
   const tab = activeTab === undefined ? localTab : activeTab
+  const advancedMode = settings.experienceMode === 'advanced'
   const activeItem = tabGroups.flatMap((group) => group.items).find((item) => item.id === tab)
   const matchById = useMemo(() => new Map(conversationMatches.map((match) => [match.conversationId, match])), [conversationMatches])
   const recentChats = useMemo(() => {
@@ -377,18 +388,20 @@ export function Sidebar({
           <FileText size={15} />
           <span>Projects</span>
         </button>
-        <button type="button" className={`codex-nav-row ${tab === 'tasks' ? 'codex-nav-row-active' : ''}`} onClick={() => openPanel('tasks')}>
-          <ListTodo size={15} />
-          <span>Tasks</span>
-        </button>
-        <button type="button" className={`codex-nav-row ${tab === 'skills' ? 'codex-nav-row-active' : ''}`} onClick={() => openPanel('skills')}>
-          <Sparkles size={15} />
-          <span>Skills</span>
-        </button>
-        <button type="button" className={`codex-nav-row ${tab === 'diagnostics' ? 'codex-nav-row-active' : ''}`} onClick={() => openPanel('diagnostics')}>
-          <Activity size={15} />
-          <span>Diagnostics</span>
-        </button>
+        {advancedMode && <>
+          <button type="button" className={`codex-nav-row ${tab === 'tasks' ? 'codex-nav-row-active' : ''}`} onClick={() => openPanel('tasks')}>
+            <ListTodo size={15} />
+            <span>Tasks</span>
+          </button>
+          <button type="button" className={`codex-nav-row ${tab === 'skills' ? 'codex-nav-row-active' : ''}`} onClick={() => openPanel('skills')}>
+            <Sparkles size={15} />
+            <span>Skills</span>
+          </button>
+          <button type="button" className={`codex-nav-row ${tab === 'diagnostics' ? 'codex-nav-row-active' : ''}`} onClick={() => openPanel('diagnostics')}>
+            <Activity size={15} />
+            <span>Diagnostics</span>
+          </button>
+        </>}
       </div>
 
       <div className="codex-chat-list min-h-0 flex-1 overflow-auto">
@@ -459,7 +472,7 @@ export function Sidebar({
         ) : (
           <div className="codex-empty-history">No chats yet</div>
         )}
-        <details className="codex-more-tools">
+        {advancedMode && <details className="codex-more-tools">
           <summary>
             More tools
             <ChevronRight size={13} />
@@ -480,7 +493,7 @@ export function Sidebar({
               ))}
             </div>
           ))}
-        </details>
+        </details>}
       </div>
 
       <div className="codex-sidebar-footer">
@@ -508,25 +521,28 @@ export function Sidebar({
                   <span className={`codex-avatar-preview-orb codex-user-orb codex-user-orb-${settings.profileAvatarPreset ?? 'nova'}`} aria-hidden="true" />
                 )}
                 <div>
-                  <strong>{avatarSrc ? 'Custom image' : avatarPresets.find((preset) => preset.id === (settings.profileAvatarPreset ?? 'nova'))?.label ?? 'Nebula preset'}</strong>
+                  <strong>{avatarSrc ? 'Custom image' : avatarPresets.find((preset) => preset.id === (settings.profileAvatarPreset ?? 'nova'))?.name ?? 'Nebula preset'}</strong>
                   <span>{avatarSrc ? 'Loaded from your PC' : avatarPresets.find((preset) => preset.id === (settings.profileAvatarPreset ?? 'nova'))?.description ?? 'Built-in Nebula style'}</span>
                 </div>
               </div>
               <button type="button" className="codex-avatar-action" onClick={() => void chooseAvatarImage()}>
                 Choose image
               </button>
+              <div className="codex-avatar-categories" role="tablist" aria-label="Avatar categories">
+                {([['nebula_originals', 'Originals'], ['black_matter', 'Black Matter'], ['signals', 'Signals']] as const).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={avatarCategory === id} className={avatarCategory === id ? 'codex-avatar-category-active' : ''} onClick={() => setAvatarCategory(id)}>{label}</button>)}
+              </div>
               <div className="codex-avatar-presets">
-                {avatarPresets.map((preset) => (
+                {avatarPresets.filter((preset) => preset.category === avatarCategory).map((preset) => (
                   <button
                     key={preset.id}
                     type="button"
                     className={settings.profileAvatarMode === 'preset' && settings.profileAvatarPreset === preset.id ? 'codex-avatar-preset-active' : ''}
                     onClick={() => selectAvatarPreset(preset.id)}
-                    title={preset.label}
-                    aria-label={`Use ${preset.label} avatar`}
+                    title={preset.name}
+                    aria-label={`Use ${preset.name} avatar`}
                   >
                     <span className={`codex-user-orb codex-user-orb-${preset.id}`} aria-hidden="true" />
-                    <span className="codex-avatar-preset-label">{preset.label}</span>
+                    <span className="codex-avatar-preset-label">{preset.name}</span>
                   </button>
                 ))}
               </div>
@@ -542,7 +558,7 @@ export function Sidebar({
             </div>
           )}
         </div>
-        <button type="button" className="codex-project-footer" onClick={() => openPanel('profiles')}>
+        <button type="button" className="codex-project-footer" onClick={() => openPanel(advancedMode ? 'profiles' : 'files')}>
           <span className="min-w-0 flex-1">
             <strong>{settings.projectFolder.split(/[\\/]/).filter(Boolean).at(-1) || 'Nebula'}</strong>
             <small>{agentStatus.replaceAll('_', ' ')}</small>

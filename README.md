@@ -1,5 +1,7 @@
 # Nebula
 
+Current release: **Nebula: Black Matter** (`2.0.0`, build `2`). Black Matter is Nebula's first major named release, with selectable themes and a unified execution-control system across desktop and mobile.
+
 Architecture and staged local-model platform roadmap: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 Nebula 2.0 adds consolidated model control, structured composer attachments, searchable and foldered conversations, persisted project health, context pins, memory-quality review, voice diagnostics, safe patch batches, and an optional Daily Brief. See [the workflow upgrade notes](docs/NEBULA_2_WORKFLOW.md).
@@ -51,6 +53,11 @@ http://localhost:1234/v1/chat/completions
 - Fine-Tuning Lab that redacts/filters accepted local traces into train/validation JSONL for QLoRA
 - Private iPhone PWA with shared chat history, streaming responses, attachments, voice dictation, Stop, and mobile approval cards through Tailscale Serve
 - Native iPhone companion project with Keychain pairing, native haptics/notifications, safe PC settings, and a Codemagic unsigned-IPA workflow. See [the iOS guide](docs/IOS_NATIVE.md).
+- Black Matter and Nebula Original themes with live switching, accessible motion/transparency fallbacks, and the Event Horizon startup sequence
+- Approval, Safe, and session-only Full Access execution modes with a permanent catastrophic-action blocklist
+- Cancellable terminal jobs with streamed output, command history, execution receipts, health diagnostics, and process-tree termination
+- Installed-app discovery, trusted aliases, recent apps, ambiguity handling, and audited app launches
+- Twelve categorized built-in avatars plus custom image support
 
 ## Requirements
 
@@ -171,7 +178,9 @@ Web Search currently uses a manual/mock provider unless a SerpAPI, Tavily, or Br
 
 ## Safety Notes
 
-Nebula defaults to fast actions with full logging. The Safety Agent still blocks destructive system operations, credential-related commands, antivirus disabling, hidden execution flows, random download-and-execute commands, and obvious system-folder deletion patterns.
+Nebula defaults to **Allow Safe Executions**. **Ask for Approval** confirms every command or side-effectful tool. **Full Access** requires typing `ENABLE FULL ACCESS`, lasts only for the current session, and resets to Safe after restart.
+
+Every mode permanently blocks drive formatting, credential theft, antivirus/security disabling, hidden execution flows, random download-and-execute commands, and destructive system-folder operations. Full Access does not bypass those guards and never elevates to administrator.
 
 The app never runs commands as admin automatically. Commands run in the selected project folder by default.
 

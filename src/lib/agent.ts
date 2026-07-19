@@ -8,7 +8,7 @@ import {
   streamChat,
   type LmChatMessage,
 } from './lmstudio'
-import { classifyTool } from './commandSafety'
+import { classifyTool, toolNeedsApproval } from './commandSafety'
 import { executeTool, parseToolRequest } from './tools'
 import {
   findSkillForTool,
@@ -28,6 +28,8 @@ import { recordContextBundle, recordDiagnosticEvent } from './orchestratorDiagno
 import { saveContextInspectorSnapshot } from './contextInspector'
 import { NEBULA_IDENTITY_RULES } from './nebulaIdentity'
 import { throwIfRunCancelled } from './agentRun'
+import { getRuntimeExecutionGrant } from './runtimeExecution'
+import { recordExecutionReceipt, updateExecutionReceipt } from './executionReceipts'
 
 export const MAIN_AGENT_SYSTEM_PROMPT = `You are Nebula, a local AI assistant running on Jonard's computer.
 
@@ -282,6 +284,7 @@ async function runToolWithSafety(
   handlers: AgentLoopHandlers,
   enabledToolNames: Set<ToolName>,
   signal?: AbortSignal,
+  source: 'desktop' | 'mobile' | 'voice' | 'automation' = 'desktop',
 ) {
   throwIfRunCancelled(signal)
   handlers.onToolRequest(toolRequest)
@@ -297,6 +300,21 @@ async function runToolWithSafety(
   }
 
   const safety = classifyTool(toolRequest.tool, toolRequest.args)
+  const runtimeGrant = getRuntimeExecutionGrant()
+  const executionMode = runtimeGrant.mode === 'full' ? 'full' : settings.actionMode
+  const receiptId = crypto.randomUUID()
+  const receiptStartedAt = new Date().toISOString()
+  recordExecutionReceipt({
+    id: receiptId,
+    tool: toolRequest.tool,
+    request: toolRequest,
+    executionMode,
+    riskLevel: safety.level,
+    source,
+    status: safety.level === 'blocked' ? 'blocked' : 'running',
+    summary: safety.reason,
+    startedAt: receiptStartedAt,
+  })
 
   if (safety.level === 'blocked') {
     const result: ToolResult = {
@@ -304,17 +322,14 @@ async function runToolWithSafety(
       tool: toolRequest.tool,
       error: `Blocked by Safety Agent: ${safety.reason}`,
     }
+    updateExecutionReceipt(receiptId, { status: 'blocked', finishedAt: new Date().toISOString() })
     handlers.onToolResult(result)
     return result
   }
 
-  const actionMode = settings.actionMode ?? (settings.requireApproval ? 'guarded' : 'fast')
-  const needsApproval =
-    safety.level === 'high_risk' ||
-    actionMode === 'strict' ||
-    (actionMode === 'guarded' && safety.level !== 'safe')
+  const needsApproval = toolNeedsApproval(executionMode, toolRequest.tool, safety)
 
-  if (needsApproval && safety.level !== 'safe') {
+  if (needsApproval) {
     handlers.setStatus('waiting_approval')
     const approved = await handlers.requestApproval({
       id: crypto.randomUUID(),
@@ -327,6 +342,7 @@ async function runToolWithSafety(
 
     if (!approved) {
       const result: ToolResult = { ok: false, tool: toolRequest.tool, error: 'User rejected the action.' }
+      updateExecutionReceipt(receiptId, { status: 'rejected', finishedAt: new Date().toISOString() })
       handlers.onToolResult(result)
       return result
     }
@@ -345,6 +361,15 @@ async function runToolWithSafety(
       result.error,
     )
   }
+  updateExecutionReceipt(receiptId, {
+    status: result.ok ? 'completed' : 'failed',
+    summary: result.ok ? `${toolRequest.tool} completed.` : result.error ?? `${toolRequest.tool} failed.`,
+    finishedAt: new Date().toISOString(),
+    durationMs: Math.round(performance.now() - started),
+    commandJobId: typeof result.output === 'object' && result.output !== null && 'jobId' in result.output
+      ? String((result.output as { jobId?: unknown }).jobId ?? '') || undefined
+      : undefined,
+  })
   handlers.onToolResult(result)
   return result
 }
@@ -547,7 +572,7 @@ export async function runAgentLoop(
             return
           }
 
-          const result = await runToolWithSafety(jsonToolRequest, settings, handlers, enabledToolNames, signal)
+          const result = await runToolWithSafety(jsonToolRequest, settings, handlers, enabledToolNames, signal, contextHints.executionSource)
           const resultContent = JSON.stringify(result)
           loopMessages = [...loopMessages, message('tool', resultContent, { toolResult: result })]
           lmMessages = [
@@ -563,7 +588,7 @@ export async function runAgentLoop(
 
         for (const call of response.toolCalls) {
           const toolRequest: ToolRequest = { tool: call.name as ToolName, args: call.args }
-          const result = await runToolWithSafety(toolRequest, settings, handlers, enabledToolNames, signal)
+          const result = await runToolWithSafety(toolRequest, settings, handlers, enabledToolNames, signal, contextHints.executionSource)
           const resultContent = JSON.stringify(result)
           loopMessages = [...loopMessages, message('tool', resultContent, { toolResult: result })]
           lmMessages = [
@@ -620,7 +645,7 @@ export async function runAgentLoop(
       return
     }
 
-    const result = await runToolWithSafety(toolRequest, settings, handlers, enabledToolNames, signal)
+    const result = await runToolWithSafety(toolRequest, settings, handlers, enabledToolNames, signal, contextHints.executionSource)
     loopMessages = [...loopMessages, message('tool', JSON.stringify(result), { toolResult: result })]
     lmMessages = [...lmMessages, { role: 'tool', content: JSON.stringify(result), name: toolRequest.tool }]
     handlers.setStatus('thinking')

@@ -81,32 +81,42 @@ export async function openAmbientOverlay() {
   const label = 'ambient-overlay'
   const existing = await WebviewWindow.getByLabel(label).catch(() => null)
 
+  const reveal = async (overlay: InstanceType<typeof WebviewWindow>) => {
+    await overlay.show()
+    await overlay.setAlwaysOnTop(true)
+    await overlay.setFullscreen(true)
+    await overlay.setFocus()
+  }
+
   if (existing) {
-    await existing.show().catch(() => undefined)
-    await existing.setAlwaysOnTop(true).catch(() => undefined)
-    await existing.setFullscreen(true).catch(() => undefined)
-    await existing.setFocus().catch(() => undefined)
+    await reveal(existing)
+    const { emit } = await import('@tauri-apps/api/event')
+    await emit('ambient-open').catch(() => undefined)
     return true
   }
 
-  await new Promise<void>((resolve, reject) => {
-    const overlay = new WebviewWindow(label, {
-      url: '/?overlay=ambient',
-      title: 'Nebula Ambient',
-      fullscreen: true,
-      transparent: true,
-      decorations: false,
-      alwaysOnTop: true,
-      skipTaskbar: true,
-      resizable: false,
-      shadow: false,
-      focus: true,
-      visible: true,
-    })
+  const overlay = new WebviewWindow(label, {
+    url: '/?overlay=ambient',
+    title: 'Nebula Ambient',
+    fullscreen: true,
+    transparent: true,
+    decorations: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    shadow: false,
+    focus: true,
+    visible: false,
+  })
 
+  await new Promise<void>((resolve, reject) => {
     overlay.once('tauri://created', () => resolve())
     overlay.once('tauri://error', (event) => reject(event.payload))
   })
+  await reveal(overlay)
+
+  const { emit } = await import('@tauri-apps/api/event')
+  await emit('ambient-open').catch(() => undefined)
 
   return true
 }

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { getMobileControlSettings, getMobileDiagnostics, getMobileModels, updateMobileControlSettings } from './api'
 import { deletePrivateValue } from './idb'
 import type { MobileControlSettings, MobileDiagnostics, MobileModelSummary, MobilePreferences, RuntimeStatus } from './types'
+import { NEBULA_RELEASE } from '../../release'
 
 type SettingsSection = 'appearance' | 'chat' | 'voice' | 'models' | 'assistant' | 'connection' | 'data' | 'diagnostics'
 
@@ -37,6 +38,8 @@ export function MobileSettingsScreen({ preferences, online, runtime, onChange, o
   const [diagnostics, setDiagnostics] = useState<MobileDiagnostics | null>(null)
   const [loadingRemote, setLoadingRemote] = useState(false)
   const [notice, setNotice] = useState('')
+  const [fullAccessOpen, setFullAccessOpen] = useState(false)
+  const [fullAccessPhrase, setFullAccessPhrase] = useState('')
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -77,6 +80,15 @@ export function MobileSettingsScreen({ preferences, online, runtime, onChange, o
     }
   }
 
+  function chooseExecutionMode(actionMode: MobileControlSettings['actionMode']) {
+    if (actionMode === 'full') {
+      setFullAccessPhrase('')
+      setFullAccessOpen(true)
+      return
+    }
+    void patchControl({ actionMode })
+  }
+
   return <div className="settings-screen">
     <header className="settings-header">
       <button onClick={() => active ? setActive(null) : onClose()} aria-label={active ? 'Back to settings' : 'Close settings'}><ChevronLeft size={22} /></button>
@@ -93,11 +105,14 @@ export function MobileSettingsScreen({ preferences, online, runtime, onChange, o
       <div className="settings-section-list">{filtered.map((item) => <button key={item.id} onClick={() => setActive(item.id)}>
         <i><item.icon size={18} /></i><span><strong>{item.label}</strong><small>{item.detail}</small></span><ChevronLeft className="settings-chevron" size={16} />
       </button>)}</div>
-      <p className="settings-version">Nebula Mobile 1.0</p>
+      <p className="settings-version">{NEBULA_RELEASE.displayName} · {NEBULA_RELEASE.marketingVersion} ({NEBULA_RELEASE.build})</p>
     </div> : <div className="settings-detail">
       {active === 'appearance' && <>
         <Group title="Theme">
-          <Choice label="Appearance" value={preferences.theme} options={[['system','System'],['dark','Dark'],['light','Light']]} onChange={(theme) => onChange({ theme: theme as MobilePreferences['theme'] })} />
+          <Choice label="Appearance" value={preferences.theme} options={[['black_matter','Black Matter'],['original','Nebula Original'],['system','System'],['light','Light']]} onChange={(theme) => {
+            onChange({ theme: theme as MobilePreferences['theme'] })
+            if ((theme === 'black_matter' || theme === 'original') && control) void patchControl({ visualTheme: theme })
+          }} />
           <Range label="Text size" value={preferences.textScale} min={0.85} max={1.3} step={0.05} display={`${Math.round(preferences.textScale * 100)}%`} onChange={(textScale) => onChange({ textScale })} />
           <Range label="Nebula accent" value={preferences.accentIntensity} min={0} max={1} step={0.1} display={`${Math.round(preferences.accentIntensity * 100)}%`} onChange={(accentIntensity) => onChange({ accentIntensity })} />
         </Group>
@@ -172,7 +187,8 @@ export function MobileSettingsScreen({ preferences, online, runtime, onChange, o
         <Group title="Research and safety">
           <Toggle label="Search web when needed" checked={control.autoWebSearch} onChange={(autoWebSearch) => void patchControl({ autoWebSearch })} />
           <Range label="Maximum pages" value={control.maxAutoFetchPages} min={1} max={8} step={1} display={String(control.maxAutoFetchPages)} onChange={(maxAutoFetchPages) => void patchControl({ maxAutoFetchPages })} />
-          <Choice label="Action mode" value={control.actionMode} options={[["fast","Fast"],["guarded","Guarded"],["strict","Strict"]]} onChange={(actionMode) => void patchControl({ actionMode: actionMode as MobileControlSettings['actionMode'] })} />
+          <Choice label="Execution mode" value={control.actionMode} options={[["approval","Ask for Approval"],["safe","Allow Safe Executions"],["full","Full Access"]]} onChange={(actionMode) => chooseExecutionMode(actionMode as MobileControlSettings['actionMode'])} />
+          <p className="settings-note">Full Access lasts until Nebula Desktop restarts, never runs as administrator, and cannot bypass permanent security blocks.</p>
         </Group>
       </>}</RemoteState>}
 
@@ -192,7 +208,7 @@ export function MobileSettingsScreen({ preferences, online, runtime, onChange, o
           <Toggle label="Cache conversation summaries" checked={preferences.cacheHistory} onChange={(cacheHistory) => onChange({ cacheHistory })} />
           <Toggle label="Save conversation drafts" checked={preferences.persistDrafts} onChange={(persistDrafts) => onChange({ persistDrafts })} />
           <button className="settings-action" onClick={() => void deletePrivateValue('conversation-cache').then(() => setNotice('Phone cache cleared'))}><Database size={17} /> Clear conversation cache</button>
-          <button className="settings-action" onClick={() => { onChange({ ...preferences, theme: 'dark', textScale: 1, compactMessages: false, reducedMotion: false, reducedTransparency: false, highContrast: false }); setNotice('Appearance reset') }}><RefreshCw size={17} /> Reset appearance</button>
+          <button className="settings-action" onClick={() => { onChange({ ...preferences, theme: 'black_matter', textScale: 1, compactMessages: false, reducedMotion: false, reducedTransparency: false, highContrast: false }); setNotice('Appearance reset') }}><RefreshCw size={17} /> Reset appearance</button>
         </Group>
         <p className="settings-note">Clearing the phone cache does not delete conversations stored on your PC.</p>
       </>}
@@ -214,6 +230,18 @@ export function MobileSettingsScreen({ preferences, online, runtime, onChange, o
       </>}
     </div>}
     {notice && <div className="settings-notice">{notice}</div>}
+    {fullAccessOpen && <div className="mobile-confirm-backdrop" onPointerDown={(event) => { if (event.currentTarget === event.target) setFullAccessOpen(false) }}>
+      <section className="mobile-confirm-sheet" role="dialog" aria-modal="true" aria-labelledby="mobile-full-access-title">
+        <ShieldCheck size={24} />
+        <h2 id="mobile-full-access-title">Enable Full Access</h2>
+        <p>Nebula may execute legitimate commands, file changes, and app launches without asking for this desktop session.</p>
+        <label><span>Type <strong>ENABLE FULL ACCESS</strong></span><input autoFocus value={fullAccessPhrase} onChange={(event) => setFullAccessPhrase(event.target.value)} autoCapitalize="characters" autoCorrect="off" spellCheck={false} /></label>
+        <div><button type="button" onClick={() => setFullAccessOpen(false)}>Cancel</button><button type="button" disabled={fullAccessPhrase !== 'ENABLE FULL ACCESS'} onClick={() => {
+          void patchControl({ actionMode: 'full', fullAccessConfirmation: fullAccessPhrase })
+          setFullAccessOpen(false)
+        }}>Enable for this session</button></div>
+      </section>
+    </div>}
   </div>
 }
 

@@ -7,10 +7,10 @@ import { Sidebar } from './Sidebar'
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue('') }))
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn().mockResolvedValue(null) }))
 
-function renderSidebar() {
+function renderSidebar(settings = DEFAULT_SETTINGS) {
   return render(
     <Sidebar
-      settings={DEFAULT_SETTINGS}
+      settings={settings}
       logs={[]}
       files={[]}
       onOpenFile={vi.fn()}
@@ -47,5 +47,20 @@ describe('Sidebar interaction', () => {
     expect(screen.getByText('Avatar')).toBeVisible()
     fireEvent.pointerDown(document.body)
     expect(screen.queryByText('Avatar')).not.toBeInTheDocument()
+  })
+
+  it('keeps specialist navigation out of Simple Mode', () => {
+    renderSidebar()
+    expect(screen.queryByRole('button', { name: 'Tasks' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Skills' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Diagnostics' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Open Settings' })).toBeVisible()
+  })
+
+  it('restores specialist navigation in Advanced Mode', () => {
+    renderSidebar({ ...DEFAULT_SETTINGS, experienceMode: 'advanced' })
+    expect(screen.getByRole('button', { name: 'Tasks' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Skills' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Diagnostics' })).toBeVisible()
   })
 })

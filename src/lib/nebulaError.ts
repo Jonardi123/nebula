@@ -1,5 +1,23 @@
 export type NebulaErrorCode = 'offline' | 'missing_model' | 'unloaded_model' | 'timeout' | 'cancelled' | 'malformed_response' | 'permission_denied' | 'tool_failure' | 'storage_failure' | 'unknown'
 export interface NebulaError { code: NebulaErrorCode; message: string; recoverable: boolean; cause?: string }
+export type RecoveryAction = 'open_lmstudio' | 'load_model' | 'choose_model' | 'retry' | 'choose_project' | 'open_settings'
+export interface UserFacingError extends NebulaError {
+  title: string
+  action?: RecoveryAction
+  actionLabel?: string
+}
+
+export function userFacingNebulaError(error: unknown): UserFacingError {
+  const normalized = normalizeNebulaError(error)
+  if (normalized.code === 'offline') return { ...normalized, title: 'Local AI is offline', action: 'open_lmstudio', actionLabel: 'Open LM Studio and retry' }
+  if (normalized.code === 'unloaded_model') return { ...normalized, title: 'Your model is not ready', action: 'load_model', actionLabel: 'Load model and retry' }
+  if (normalized.code === 'missing_model') return { ...normalized, title: 'Nebula needs a model', action: 'choose_model', actionLabel: 'Find a model and retry' }
+  if (normalized.code === 'timeout') return { ...normalized, title: 'That took too long', action: 'retry', actionLabel: 'Retry' }
+  if (normalized.code === 'permission_denied') return { ...normalized, title: 'Permission needed', action: 'open_settings', actionLabel: 'Open Settings' }
+  if (normalized.code === 'storage_failure') return { ...normalized, title: 'Local history needs attention', action: 'open_settings', actionLabel: 'Open Settings' }
+  if (normalized.code === 'cancelled') return { ...normalized, title: 'Request stopped' }
+  return { ...normalized, title: 'Nebula could not finish', action: normalized.recoverable ? 'retry' : undefined, actionLabel: normalized.recoverable ? 'Try again' : undefined }
+}
 
 export function normalizeNebulaError(error: unknown): NebulaError {
   const message = error instanceof Error ? error.message : String(error)

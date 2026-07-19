@@ -10,6 +10,11 @@ import type { AppSettings } from '../types/settings'
 import { getDailyBrief } from '../lib/dailyBrief'
 import { NebulaGlyph } from './NebulaGlyph'
 import { getEnabledToolNames } from '../skills'
+import { publicRunStageForStatus, publicRunStageLabel } from '../lib/publicRunStage'
+import type { UserFacingError } from '../lib/nebulaError'
+import { VoiceRecognitionService } from '../lib/voiceRecognition'
+import { recordVoiceDiagnostic } from '../lib/voiceDiagnostics'
+import type { VoiceFailure } from '../types/voice'
 
 interface Props {
   messages: ChatMessage[]
@@ -23,37 +28,9 @@ interface Props {
   onQuickAction?: (actionId: string, target?: string, source?: string) => void
   settings: AppSettings
   onSettingsChange: (settings: AppSettings) => void
-}
-
-type BrowserSpeechRecognition = {
-  lang: string
-  interimResults: boolean
-  continuous: boolean
-  start: () => void
-  stop: () => void
-  onresult: ((event: SpeechRecognitionResultEvent) => void) | null
-  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null
-  onend: (() => void) | null
-}
-
-type SpeechRecognitionConstructor = new () => BrowserSpeechRecognition
-
-type SpeechRecognitionResultEvent = {
-  results: ArrayLike<{ 0: { transcript: string }; isFinal: boolean }>
-}
-
-type SpeechRecognitionErrorEvent = {
-  error: string
-}
-
-type SpeechWindow = Window & {
-  SpeechRecognition?: SpeechRecognitionConstructor
-  webkitSpeechRecognition?: SpeechRecognitionConstructor
-}
-
-function getSpeechRecognitionConstructor() {
-  const speechWindow = window as SpeechWindow
-  return speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition
+  recovery?: UserFacingError | null
+  recoveryBusy?: boolean
+  onRecovery?: () => void
 }
 
 function greeting() {
@@ -75,6 +52,9 @@ export function ChatPanel({
   onQuickAction,
   settings,
   onSettingsChange,
+  recovery,
+  recoveryBusy = false,
+  onRecovery,
 }: Props) {
   const [text, setText] = useState('')
   const [lmModels, setLmModels] = useState<ModelInfo[]>([])
@@ -85,8 +65,11 @@ export function ChatPanel({
   const [activeMode, setActiveMode] = useState<'web' | 'deep' | 'local' | ''>('')
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
   const [listening, setListening] = useState(false)
+  const [voiceFailure, setVoiceFailure] = useState<VoiceFailure | null>(null)
   const [dailyBrief, setDailyBrief] = useState<DailyBrief | null>(() => getDailyBrief())
-  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null)
+  const recognitionRef = useRef<VoiceRecognitionService | null>(null)
+  const voiceBaseTextRef = useRef('')
+  const voiceSubmitTimerRef = useRef<number | null>(null)
   const composerRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const visibleMessages = useMemo(() => messages.filter((message) => message.role !== 'system'), [messages])
@@ -102,6 +85,8 @@ export function ChatPanel({
   const projectLabel = projectName || workspaceAwareness?.projectName || 'Choose project'
   const currentFilePath = workspaceAwareness?.openedFile?.trim() || ''
   const webSearchAvailable = getEnabledToolNames().has('web_search')
+  const advancedMode = settings.experienceMode === 'advanced'
+  const publicStage = publicRunStageForStatus(agentStatus)
 
   useEffect(() => {
     const textarea = textareaRef.current
@@ -237,45 +222,61 @@ export function ChatPanel({
     }
   }
 
-  function startSpeechToText() {
-    const SpeechRecognition = getSpeechRecognitionConstructor()
-    if (!SpeechRecognition) {
-      fillComposer('Speech-to-text is not supported in this WebView. ')
-      return
-    }
-
+  async function startSpeechToText(forceOnline = false) {
     if (recognitionRef.current) {
       recognitionRef.current.stop()
       recognitionRef.current = null
       setListening(false)
       return
     }
-
-    const recognition = new SpeechRecognition()
-    recognition.lang = settings.voiceLanguage || 'en-US'
-    recognition.interimResults = true
-    recognition.continuous = false
-    recognition.onresult = (event) => {
-      const transcript = Array.from(event.results)
-        .map((result) => result[0]?.transcript ?? '')
-        .join(' ')
-        .trim()
-      if (!transcript) return
-      setText((current) => `${current}${current && !current.endsWith(' ') ? ' ' : ''}${transcript}`)
-    }
-    recognition.onerror = (event) => {
-      setText((current) => `${current}${current ? ' ' : ''}[Speech error: ${event.error}] `)
-      setListening(false)
+    if (voiceSubmitTimerRef.current !== null) window.clearTimeout(voiceSubmitTimerRef.current)
+    voiceBaseTextRef.current = text.trim()
+    setVoiceFailure(null)
+    const service = new VoiceRecognitionService({
+      language: settings.voiceLanguage || 'en-US',
+      mode: forceOnline ? 'online' : (settings.voiceRecognitionMode || 'local_first'),
+      allowOnline: forceOnline || settings.voiceOnlineConsent || settings.voiceRecognitionMode === 'online',
+      callbacks: {
+        onEngine: (engine, localAvailability) => recordVoiceDiagnostic({ supported: true, permission: 'granted', language: settings.voiceLanguage || 'en-US', engine, localAvailability }),
+        onStart: () => setListening(true),
+        onInterim: (interim) => {
+          const prefix = voiceBaseTextRef.current
+          setText(`${prefix}${prefix && interim ? ' ' : ''}${interim}`)
+        },
+        onFinal: (finalText) => {
+          const prefix = voiceBaseTextRef.current
+          const complete = `${prefix}${prefix && finalText ? ' ' : ''}${finalText}`.trim()
+          setText(complete)
+          voiceBaseTextRef.current = complete
+          recordVoiceDiagnostic({ supported: true, permission: 'granted', language: settings.voiceLanguage || 'en-US', lastTranscriptAt: new Date().toISOString(), lastTranscriptPreview: finalText.slice(0, 120), lastError: undefined })
+        },
+        onError: (failure) => {
+          setListening(false)
+          setVoiceFailure(failure)
+          recognitionRef.current = null
+          recordVoiceDiagnostic({ supported: true, permission: failure.code.includes('denied') ? 'denied' : 'unknown', language: settings.voiceLanguage || 'en-US', lastErrorCode: failure.code, lastError: failure.message })
+        },
+        onEnd: () => {
+          setListening(false)
+          recognitionRef.current = null
+          textareaRef.current?.focus()
+          const complete = voiceBaseTextRef.current.trim()
+          if (settings.voiceAutoSubmit && complete && !disabled) {
+            voiceSubmitTimerRef.current = window.setTimeout(() => submitContent(complete), settings.voiceSilenceMs || 1200)
+          }
+        },
+      },
+    })
+    recognitionRef.current = service
+    try {
+      await service.prepare()
+      service.start()
+    } catch (error) {
+      const failure = error as VoiceFailure
       recognitionRef.current = null
-    }
-    recognition.onend = () => {
       setListening(false)
-      recognitionRef.current = null
-      textareaRef.current?.focus()
+      setVoiceFailure(failure)
     }
-    recognitionRef.current = recognition
-    setListening(true)
-    recognition.start()
   }
 
   function chooseMode(mode: 'web' | 'deep' | 'local') {
@@ -312,6 +313,10 @@ export function ChatPanel({
   useEffect(() => {
     void refreshModelChoices()
   }, [refreshModelChoices])
+  useEffect(() => () => {
+    recognitionRef.current?.dispose()
+    if (voiceSubmitTimerRef.current !== null) window.clearTimeout(voiceSubmitTimerRef.current)
+  }, [])
   useEffect(() => {
     if (!openMenu) return
     function closeOnOutsideClick(event: MouseEvent) {
@@ -329,9 +334,9 @@ export function ChatPanel({
     }
   }, [openMenu])
 
-  function submit() {
+  function submitContent(rawContent: string) {
     if (disabled) return
-    const content = text.trim()
+    const content = rawContent.trim()
     if (!content) return
     const prefix = activeMode === 'web'
       ? '[WEB SEARCH]\nSearch the web for current sources, cite useful links, then answer. Query: '
@@ -347,6 +352,10 @@ export function ChatPanel({
     onSend(`${prefix}${content}`, submittedAttachments)
   }
 
+  function submit() {
+    submitContent(text)
+  }
+
   return (
     <section className={`chat-shell codex-chat-shell flex min-h-0 flex-1 flex-col ${isEmptyThread ? 'codex-chat-empty' : 'codex-chat-active'}`}>
       <div className="nebula-thread codex-thread min-h-0 flex-1 overflow-auto px-5 py-5">
@@ -358,23 +367,38 @@ export function ChatPanel({
                 <span className="nebula-orbit-ring nebula-orbit-ring-one" />
                 <span className="nebula-orbit-ring nebula-orbit-ring-two" />
               </div>
-              <span className="nebula-workspace-kicker">Nebula workspace</span>
+              <span className="nebula-workspace-kicker">Nebula</span>
             </div>
-            <h1>What should we work on?</h1>
-            <p>{greeting()}, Jonard. Nebula is ready.</p>
+            <h1>{advancedMode ? 'What should we work on?' : 'How can I help?'}</h1>
+            <p>{advancedMode ? `${greeting()}, Jonard. Nebula is ready.` : `${greeting()}, Jonard. Ask, research, create, or continue from your phone.`}</p>
             <div className="codex-empty-actions">
-              <button type="button" onClick={() => onQuickAction?.('review-project', undefined, 'empty-state')}>
-                <Search size={14} />
-                <span><strong>Review project</strong><small>Inspect structure and risks</small></span>
-              </button>
-              <button type="button" onClick={() => onQuickAction?.('summarize-readme', undefined, 'empty-state')}>
-                <Files size={14} />
-                <span><strong>Summarize README</strong><small>Understand the active workspace</small></span>
-              </button>
-              <button type="button" onClick={() => onQuickAction?.('find-bugs', undefined, 'empty-state')}>
-                <Code2 size={14} />
-                <span><strong>Find bugs</strong><small>Scan code and verify findings</small></span>
-              </button>
+              {advancedMode ? <>
+                <button type="button" onClick={() => onQuickAction?.('review-project', undefined, 'empty-state')}>
+                  <Search size={14} />
+                  <span><strong>Review project</strong><small>Inspect structure and risks</small></span>
+                </button>
+                <button type="button" onClick={() => onQuickAction?.('summarize-readme', undefined, 'empty-state')}>
+                  <Files size={14} />
+                  <span><strong>Summarize README</strong><small>Understand the active workspace</small></span>
+                </button>
+                <button type="button" onClick={() => onQuickAction?.('find-bugs', undefined, 'empty-state')}>
+                  <Code2 size={14} />
+                  <span><strong>Find bugs</strong><small>Scan code and verify findings</small></span>
+                </button>
+              </> : <>
+                <button type="button" onClick={() => { setActiveMode('web'); setText('Look up the latest information about ') }}>
+                  <Globe2 size={14} />
+                  <span><strong>Look something up</strong><small>Get a current answer with sources</small></span>
+                </button>
+                <button type="button" onClick={() => setText('Remember that I prefer ')}>
+                  <Waypoints size={14} />
+                  <span><strong>Remember a preference</strong><small>Personalize future conversations</small></span>
+                </button>
+                <button type="button" onClick={() => setText(settings.projectFolder ? 'Help me with this project: ' : 'Help me choose and understand a project folder')}>
+                  <Files size={14} />
+                  <span><strong>Work with a project</strong><small>Use local files when you choose them</small></span>
+                </button>
+              </>}
             </div>
             {workspaceAwareness?.welcomeLines?.[0] && (
               <div className="codex-welcome-note">
@@ -382,7 +406,7 @@ export function ChatPanel({
                 <span>{workspaceAwareness.welcomeLines[0]}</span>
               </div>
             )}
-            {settings.dailyBriefEnabled && dailyBrief && (
+            {advancedMode && settings.dailyBriefEnabled && dailyBrief && (
               <section className="daily-brief-card">
                 <div><strong>{dailyBrief.title}</strong><span>{new Date(dailyBrief.createdAt).toLocaleTimeString()}</span></div>
                 <p>{dailyBrief.summary}</p>
@@ -396,14 +420,20 @@ export function ChatPanel({
             {disabled && (
               <div className="nebula-stream-activity" role="status" aria-live="polite">
                 <NebulaGlyph state={agentStatus === 'reviewing' ? 'reviewing' : agentStatus === 'running_tool' ? 'tool' : 'thinking'} />
-                <span>{agentStatus === 'loading_model' ? 'Preparing a local model' : agentStatus === 'switching_model' ? 'Switching route' : agentStatus === 'reviewing' ? 'Reviewing the result' : agentStatus === 'running_tool' ? 'Using a tool' : 'Nebula is working'}</span>
+                <span>{advancedMode ? (agentStatus === 'loading_model' ? 'Preparing a local model' : agentStatus === 'switching_model' ? 'Switching route' : agentStatus === 'reviewing' ? 'Reviewing the result' : agentStatus === 'running_tool' ? 'Using a tool' : 'Nebula is working') : publicRunStageLabel(publicStage)}</span>
               </div>
             )}
           </div>
         )}
       </div>
+      {recovery && (
+        <div className="nebula-inline-recovery" role="alert">
+          <div><strong>{recovery.title}</strong><span>{recovery.message}</span></div>
+          {recovery.actionLabel && onRecovery && <button type="button" onClick={onRecovery} disabled={recoveryBusy}>{recoveryBusy ? 'Fixing...' : recovery.actionLabel}</button>}
+        </div>
+      )}
       <div className="composer-dock codex-composer-dock p-4">
-        <div className="codex-composer-meta mb-2 flex flex-wrap items-center gap-3 px-2 text-[11px] text-slate-500">
+        {advancedMode && <div className="codex-composer-meta mb-2 flex flex-wrap items-center gap-3 px-2 text-[11px] text-slate-500">
           <label className="flex min-w-0 items-center gap-2 text-slate-400">
             <span>{projectLabel}</span>
             <select
@@ -436,7 +466,16 @@ export function ChatPanel({
           <span className="ml-auto">Context</span>
           <div className="context-meter min-w-24 flex-1"><span style={{ width: `${Math.max(0, Math.min(100, contextUsage))}%` }} /></div>
           <span>{Math.round(contextUsage)}%</span>
-        </div>
+        </div>}
+        {voiceFailure && <div className="chat-voice-recovery" role="alert">
+          <span>{voiceFailure.message}</span>
+          <button type="button" onClick={() => void startSpeechToText()}>Retry</button>
+          {voiceFailure.requiresOnlineConsent && <button type="button" onClick={() => {
+            onSettingsChange({ ...settings, voiceOnlineConsent: true })
+            void startSpeechToText(true)
+          }}>Allow online</button>}
+          <button type="button" onClick={() => { setVoiceFailure(null); textareaRef.current?.focus() }}>Use text</button>
+        </div>}
         <div
           ref={composerRef}
           className="chat-composer"
@@ -493,7 +532,7 @@ export function ChatPanel({
                 </div>
               )}
             </div>
-            <button type="button" title="Speech to text" className={listening ? 'chat-composer-tool-active' : ''} onClick={startSpeechToText}><Mic size={15} /></button>
+            <button type="button" title="Speech to text" className={listening ? 'chat-composer-tool-active' : ''} onClick={() => void startSpeechToText()}><Mic size={15} /></button>
           </div>
           <div
             className="chat-composer-input"

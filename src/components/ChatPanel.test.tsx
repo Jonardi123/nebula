@@ -35,6 +35,30 @@ describe('ChatPanel composer', () => {
     expect(textarea).toHaveFocus()
   })
 
+  it('hides model and context diagnostics in Simple Mode', () => {
+    renderPanel()
+    expect(screen.queryByRole('option', { name: 'Auto routing' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Context')).not.toBeInTheDocument()
+  })
+
+  it('shows actionable recovery without blocking the composer', () => {
+    const onRecovery = vi.fn()
+    render(
+      <ChatPanel
+        messages={[]}
+        disabled={false}
+        onSend={vi.fn()}
+        settings={DEFAULT_SETTINGS}
+        onSettingsChange={vi.fn()}
+        recovery={{ code: 'offline', title: 'Local AI is offline', message: 'Start LM Studio.', recoverable: true, action: 'open_lmstudio', actionLabel: 'Fix it' }}
+        onRecovery={onRecovery}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Fix it' }))
+    expect(onRecovery).toHaveBeenCalledOnce()
+    expect(screen.getByPlaceholderText('Ask Nebula anything...')).toBeEnabled()
+  })
+
   it('sends on Enter and preserves Shift+Enter for a newline', async () => {
     const user = userEvent.setup()
     const { onSend } = renderPanel()

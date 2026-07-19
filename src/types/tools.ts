@@ -33,7 +33,7 @@ export interface ToolResult {
 export interface ApprovalRequest {
   id: string
   toolRequest: ToolRequest
-  riskLevel: Exclude<RiskLevel, 'safe'>
+  riskLevel: RiskLevel
   reason: string
   requiresTypedConfirm: boolean
   oldContent?: string

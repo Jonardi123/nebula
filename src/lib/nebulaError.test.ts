@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeNebulaError } from './nebulaError'
+import { normalizeNebulaError, userFacingNebulaError } from './nebulaError'
 
 describe('normalizeNebulaError', () => {
   it.each([
@@ -14,5 +14,12 @@ describe('normalizeNebulaError', () => {
 
   it('recognizes AbortError as cancellation', () => {
     expect(normalizeNebulaError(new DOMException('stopped', 'AbortError')).code).toBe('cancelled')
+  })
+
+  it('provides a direct recovery action for local connectivity', () => {
+    expect(userFacingNebulaError(new Error('Failed to fetch'))).toMatchObject({
+      title: 'Local AI is offline',
+      action: 'open_lmstudio',
+    })
   })
 })

@@ -14,7 +14,7 @@ export function SplashScreen({ mode = 'cinematic', onComplete }: Props) {
   const [reducedMotion, setReducedMotion] = useState(false)
   const completed = useRef(false)
   const exitTimer = useRef<number | null>(null)
-  const effectiveMode = reducedMotion && mode === 'cinematic' ? 'simple' : mode
+  const effectiveMode = reducedMotion && mode !== 'simple' && mode !== 'off' ? 'simple' : mode
   const timing = useMemo(
     () => effectiveMode === 'simple'
       ? { statusStep: 170, done: 760, exit: 240 }

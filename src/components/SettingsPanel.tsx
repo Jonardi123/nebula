@@ -1,11 +1,18 @@
-import { RefreshCw } from 'lucide-react'
+import { AppWindow, RefreshCw } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { formatTime } from '../lib/logger'
 import { listLmStudioModelInfos } from '../lib/lmstudio'
+import { cancelNeuralSpeech, getNeuralSpeechStatus, NEURAL_VOICES, speakNeural, subscribeNeuralSpeech } from '../lib/neuralSpeech'
+import { cancelSupertonicSpeech, getSupertonicStatus, speakSupertonic, subscribeSupertonic, SUPERTONIC_VOICES } from '../lib/supertonicSpeech'
+import { selectSpeechVoice } from '../lib/speechVoices'
 import type { LogEvent } from '../types/agent'
 import type { ModelInfo } from '../types/nebula'
 import type { AppSettings } from '../types/settings'
+import { NEBULA_RELEASE } from '../../release'
+import { ExecutionModeControl } from './ExecutionModeControl'
+import { getRecentApps, listInstalledApps, openApp } from '../lib/commandRunner'
+import type { InstalledApp } from '../types/execution'
 
 interface Props {
   settings: AppSettings
@@ -14,16 +21,24 @@ interface Props {
 }
 
 export function SettingsPanel({ settings, logs, onChange }: Props) {
-  const [view, setView] = useState<'general' | 'models' | 'assistant' | 'advanced' | 'logs'>('general')
+  const [view, setView] = useState<'general' | 'themes' | 'models' | 'assistant' | 'advanced' | 'logs'>('general')
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([])
   const [modelsLoading, setModelsLoading] = useState(false)
   const [modelsError, setModelsError] = useState('')
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0)
   const settingsRef = useRef(settings)
+  const advancedMode = settings.experienceMode === 'advanced'
+  const visibleViews = advancedMode
+    ? (['general', 'themes', 'models', 'assistant', 'advanced', 'logs'] as const)
+    : (['general', 'themes', 'models', 'assistant'] as const)
 
   useEffect(() => {
     settingsRef.current = settings
   }, [settings])
+
+  useEffect(() => {
+    if (!advancedMode && view !== 'general' && view !== 'themes' && view !== 'models' && view !== 'assistant') setView('general')
+  }, [advancedMode, view])
 
   useEffect(() => {
     if (view !== 'models' || settings.modelProvider !== 'lmstudio') return
@@ -99,6 +114,7 @@ export function SettingsPanel({ settings, logs, onChange }: Props) {
         review: 'openai-gpt-oss-20b-heretic-uncensored-neo-imatrix',
       },
       launcherIndexedFolders: [],
+      trustedAppAliases: {},
       maxAutoFetchPages: 2,
       memoryReviewMode: 'suggest',
       activeProjectProfileId: '',
@@ -110,7 +126,7 @@ export function SettingsPanel({ settings, logs, onChange }: Props) {
       maxTokens: 4096,
       requireApproval: false,
       riskyToolsEnabled: true,
-      actionMode: 'fast',
+      actionMode: 'safe',
       assistantHoldMs: 360,
       globalShortcutEnabled: true,
       launchAtStartup: true,
@@ -119,9 +135,20 @@ export function SettingsPanel({ settings, logs, onChange }: Props) {
       voiceEnabled: true,
       voiceAutoStart: true,
       voiceLanguage: 'en-US',
+      voiceRecognitionMode: 'local_first',
+      voiceOnlineConsent: false,
+      voiceAutoSubmit: true,
+      voiceSilenceMs: 1200,
+      voiceSpeakReplies: true,
+      voiceSynthesisMode: 'neural_local',
+      voiceNeuralVoice: 'af_heart',
+      voiceSupertonicVoice: 'F1',
+      voiceSystemVoice: '',
+      voiceRate: 0.94,
+      voicePitch: 1.02,
       wakePhraseEnabled: false,
       wakePhrase: 'Nebula',
-      startupAnimation: 'cinematic',
+      startupAnimation: 'event_horizon',
       setupWizardCompleted: true,
       setupWizardLastRunAt: new Date().toISOString(),
       overlayQuickActionsEnabled: true,
@@ -134,7 +161,7 @@ export function SettingsPanel({ settings, logs, onChange }: Props) {
   return (
     <div className="settings-page text-xs">
       <div className="settings-page-nav" role="tablist" aria-label="Settings sections">
-        {(['general', 'models', 'assistant', 'advanced', 'logs'] as const).map((item) => (
+        {visibleViews.map((item) => (
           <button key={item} className={view === item ? 'settings-page-nav-active' : ''} type="button" onClick={() => setView(item)}>
             {item === 'assistant' ? 'Assistant' : item[0].toUpperCase() + item.slice(1)}
           </button>
@@ -143,12 +170,33 @@ export function SettingsPanel({ settings, logs, onChange }: Props) {
 
       {view === 'logs' ? (
         <LogList logs={logs} />
+      ) : view === 'themes' ? (
+        <div className="settings-page-content">
+          <SettingsSection title="Themes" description="Switch instantly without changing chats, tools, or models.">
+            <div className="theme-choice-grid" role="radiogroup" aria-label="Visual theme">
+              <button type="button" role="radio" aria-checked={settings.theme === 'black_matter'} className={settings.theme === 'black_matter' ? 'theme-choice-active' : ''} onClick={() => patch({ theme: 'black_matter' })}>
+                <span className="theme-preview theme-preview-black-matter"><i /><i /><i /></span>
+                <strong>Black Matter</strong><small>Graphite, cyan signals, ultraviolet depth.</small>
+              </button>
+              <button type="button" role="radio" aria-checked={settings.theme === 'original'} className={settings.theme === 'original' ? 'theme-choice-active' : ''} onClick={() => patch({ theme: 'original' })}>
+                <span className="theme-preview theme-preview-original"><i /><i /><i /></span>
+                <strong>Nebula Original</strong><small>The earlier deep-space glass interface.</small>
+              </button>
+            </div>
+            <StartupAnimationSelector value={settings.startupAnimation ?? 'event_horizon'} onChange={(startupAnimation) => patch({ startupAnimation })} />
+          </SettingsSection>
+        </div>
       ) : view === 'general' ? (
         <div className="settings-page-content">
-          <SettingsSection title="Appearance" description="How Nebula looks when it starts.">
-            <label className="settings-field"><span>Theme</span><select value={settings.theme} onChange={(event) => patch({ theme: event.target.value as AppSettings['theme'] })}><option value="dark">Dark</option><option value="darker">Darker</option></select></label>
-            <StartupAnimationSelector value={settings.startupAnimation ?? 'cinematic'} onChange={(startupAnimation) => patch({ startupAnimation })} />
+          <SettingsSection title="Experience" description="Keep Nebula simple for daily use or reveal every developer surface.">
+            <label className="settings-field"><span>Interface mode</span><select value={settings.experienceMode ?? 'simple'} onChange={(event) => patch({ experienceMode: event.target.value as AppSettings['experienceMode'] })}><option value="simple">Simple</option><option value="advanced">Advanced</option></select></label>
+            <p className="settings-help-text">Advanced Mode reveals models, agents, diagnostics, skills, logs, training, and runtime controls. Your data is unchanged when switching modes.</p>
+          </SettingsSection>
+          <SettingsSection title="Daily behavior">
             <Toggle label="Daily brief on new chats" checked={settings.dailyBriefEnabled ?? true} onChange={(dailyBriefEnabled) => patch({ dailyBriefEnabled })} />
+          </SettingsSection>
+          <SettingsSection title="Execution" description="Control when Nebula may run commands, edit files, or open apps.">
+            <ExecutionModeControl storedMode={settings.actionMode ?? 'safe'} onStoredModeChange={(actionMode) => patch({ actionMode, requireApproval: actionMode === 'approval' })} />
           </SettingsSection>
           <SettingsSection title="Workspace" description="Local project and memory locations.">
             <Field label="Project folder" value={settings.projectFolder} onChange={(projectFolder) => patch({ projectFolder })} />
@@ -157,6 +205,7 @@ export function SettingsPanel({ settings, logs, onChange }: Props) {
           </SettingsSection>
           <SettingsSection title="Setup">
             <button className="settings-primary-action" type="button" onClick={() => window.dispatchEvent(new CustomEvent('nebula-open-setup-wizard'))}>Run Setup Wizard</button>
+            <p className="settings-help-text">{NEBULA_RELEASE.displayName} · Version {NEBULA_RELEASE.version} · Build {NEBULA_RELEASE.build}</p>
           </SettingsSection>
         </div>
       ) : view === 'models' ? (
@@ -239,8 +288,19 @@ export function SettingsPanel({ settings, logs, onChange }: Props) {
             <Toggle label="Voice input" checked={settings.voiceEnabled ?? true} onChange={(voiceEnabled) => patch({ voiceEnabled })} />
             <Toggle label="Start listening automatically" checked={settings.voiceAutoStart ?? true} onChange={(voiceAutoStart) => patch({ voiceAutoStart })} />
             <LanguageSelector value={settings.voiceLanguage ?? 'en-US'} onChange={(voiceLanguage) => patch({ voiceLanguage })} />
-            <Toggle label="Wake phrase" checked={settings.wakePhraseEnabled ?? false} onChange={(wakePhraseEnabled) => patch({ wakePhraseEnabled })} />
-            {settings.wakePhraseEnabled && <Field label="Wake phrase text" value={settings.wakePhrase ?? 'Nebula'} onChange={(wakePhrase) => patch({ wakePhrase })} />}
+            <VoiceRecognitionModeSelector value={settings.voiceRecognitionMode ?? 'local_first'} onChange={(voiceRecognitionMode) => patch({ voiceRecognitionMode })} />
+            <Toggle label="Auto-submit after speech" checked={settings.voiceAutoSubmit ?? true} onChange={(voiceAutoSubmit) => patch({ voiceAutoSubmit })} />
+            <Toggle label="Speak voice replies" checked={settings.voiceSpeakReplies ?? true} onChange={(voiceSpeakReplies) => patch({ voiceSpeakReplies })} />
+            <VoiceOutputSettings settings={settings} onChange={patch} />
+            <p className="settings-inline-note">Wake phrase is unavailable until Nebula has a real background wake-word engine.</p>
+            <details className="settings-disclosure">
+              <summary>Advanced voice</summary>
+              <div>
+                <NumberField label="Silence before submit (ms)" value={settings.voiceSilenceMs ?? 1200} step={100} onChange={(voiceSilenceMs) => patch({ voiceSilenceMs })} />
+                <NumberField label="Speech rate" value={settings.voiceRate ?? 1} step={0.1} onChange={(voiceRate) => patch({ voiceRate })} />
+                <NumberField label="Speech pitch" value={settings.voicePitch ?? 1} step={0.1} onChange={(voicePitch) => patch({ voicePitch })} />
+              </div>
+            </details>
           </SettingsSection>
           <SettingsSection title="Automation">
             <Toggle label="Automation scheduler" checked={settings.automationSchedulerEnabled ?? true} onChange={(automationSchedulerEnabled) => patch({ automationSchedulerEnabled })} />
@@ -251,7 +311,6 @@ export function SettingsPanel({ settings, logs, onChange }: Props) {
       ) : (
         <div className="settings-page-content">
           <SettingsSection title="Agent runtime">
-            <ActionModeSelector value={settings.actionMode ?? 'fast'} onChange={(actionMode) => patch({ actionMode, requireApproval: actionMode !== 'fast' })} />
             <Toggle label="Unified context injection" checked={settings.contextInjectionEnabled ?? true} onChange={(contextInjectionEnabled) => patch({ contextInjectionEnabled })} />
             <NumberField label="Context budget characters" value={settings.contextBudgetChars ?? 18000} step={1000} onChange={(contextBudgetChars) => patch({ contextBudgetChars })} />
             <NumberField label="Temperature" value={settings.temperature} step={0.1} onChange={(temperature) => patch({ temperature })} />
@@ -265,8 +324,60 @@ export function SettingsPanel({ settings, logs, onChange }: Props) {
             <Toggle label="Enable risky tools" checked={settings.riskyToolsEnabled} onChange={(riskyToolsEnabled) => patch({ riskyToolsEnabled })} />
             <TextAreaField label="Launcher indexed folders" value={(settings.launcherIndexedFolders ?? []).join('\n')} onChange={(value) => patch({ launcherIndexedFolders: value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) })} />
           </SettingsSection>
+          <SettingsSection title="App control" description="Discover installed apps and teach Nebula short, trusted aliases.">
+            <AppControlSettings settings={settings} onChange={patch} />
+          </SettingsSection>
         </div>
       )}
+    </div>
+  )
+}
+
+function AppControlSettings({ settings, onChange }: { settings: AppSettings; onChange: (update: Partial<AppSettings>) => void }) {
+  const [apps, setApps] = useState<InstalledApp[]>([])
+  const [query, setQuery] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [notice, setNotice] = useState('')
+  const aliases = Object.entries(settings.trustedAppAliases ?? {}).map(([alias, target]) => `${alias}=${target}`).join('\n')
+  const visible = apps.filter((app) => !query.trim() || `${app.name} ${app.aliases.join(' ')}`.toLowerCase().includes(query.trim().toLowerCase())).slice(0, 12)
+
+  async function refreshApps() {
+    setLoading(true)
+    setNotice('')
+    try {
+      setApps(await listInstalledApps())
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { void refreshApps() }, [])
+
+  function updateAliases(value: string) {
+    const trustedAppAliases = Object.fromEntries(value.split(/\r?\n/).map((line) => {
+      const separator = line.indexOf('=')
+      return separator > 0 ? [line.slice(0, separator).trim().toLowerCase(), line.slice(separator + 1).trim()] : ['', '']
+    }).filter(([alias, target]) => Boolean(alias && target)))
+    onChange({ trustedAppAliases })
+  }
+
+  const recent = getRecentApps()
+  return (
+    <div className="settings-app-control">
+      <div className="settings-app-toolbar">
+        <input className="nebula-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search installed apps" />
+        <button className="settings-secondary-action" type="button" onClick={() => void refreshApps()}><RefreshCw size={13} />{loading ? 'Scanning...' : 'Refresh'}</button>
+      </div>
+      {recent.length > 0 && <div className="settings-recent-apps" aria-label="Recent apps">{recent.map((app) => <button key={app} type="button" onClick={() => void openApp(app)}><AppWindow size={13} />{app}</button>)}</div>}
+      <div className="settings-installed-apps">
+        {visible.map((app) => <button key={app.id} type="button" title={app.path} onClick={() => void openApp(app.name)}><AppWindow size={14} /><span><strong>{app.name}</strong><small>{app.source.replace('_', ' ')}</small></span></button>)}
+        {!loading && visible.length === 0 && <p className="settings-help-text">No matching applications found.</p>}
+      </div>
+      {notice && <p className="settings-inline-note">{notice}</p>}
+      <TextAreaField label="Trusted aliases (one alias=app per line)" value={aliases} onChange={updateAliases} />
+      <p className="settings-help-text">Example: <code>music=Spotify</code>. Unknown executable paths still follow the active execution mode.</p>
     </div>
   )
 }
@@ -300,7 +411,8 @@ function StartupAnimationSelector({ value, onChange }: { value: AppSettings['sta
     <label className="block space-y-1">
       <span className="text-slate-400">Startup animation</span>
       <select className="nebula-input w-full px-2 py-2 outline-none" value={value} onChange={(event) => onChange(event.target.value as AppSettings['startupAnimation'])}>
-        <option value="cinematic">Cinematic</option>
+        <option value="event_horizon">Event Horizon</option>
+        <option value="cinematic">Nebula Original</option>
         <option value="simple">Simple</option>
         <option value="off">Off</option>
       </select>
@@ -349,6 +461,139 @@ function LanguageSelector({ value, onChange }: { value: string; onChange: (value
         ))}
       </select>
     </label>
+  )
+}
+
+function VoiceRecognitionModeSelector({ value, onChange }: { value: AppSettings['voiceRecognitionMode']; onChange: (value: AppSettings['voiceRecognitionMode']) => void }) {
+  return (
+    <label className="block space-y-1">
+      <span className="text-slate-400">Recognition</span>
+      <select className="nebula-input w-full px-2 py-2 outline-none" value={value} onChange={(event) => onChange(event.target.value as AppSettings['voiceRecognitionMode'])}>
+        <option value="local_first">Local first</option>
+        <option value="online">Online speech service</option>
+        <option value="text_only">Text only</option>
+      </select>
+    </label>
+  )
+}
+
+function VoiceOutputSettings({ settings, onChange }: { settings: AppSettings; onChange: (update: Partial<AppSettings>) => void }) {
+  const [status, setStatus] = useState(getNeuralSpeechStatus())
+  const [supertonicStatus, setSupertonicStatus] = useState(getSupertonicStatus())
+  const [previewing, setPreviewing] = useState(false)
+  const mode = settings.voiceSynthesisMode ?? 'neural_local'
+
+  useEffect(() => subscribeNeuralSpeech(setStatus), [])
+  useEffect(() => subscribeSupertonic(setSupertonicStatus), [])
+
+  function previewNeural() {
+    cancelNeuralSpeech()
+    cancelSupertonicSpeech()
+    setPreviewing(true)
+    void speakNeural('Hi Jonard. I am Nebula. This is my new neural voice.', {
+      voice: settings.voiceNeuralVoice,
+      speed: settings.voiceRate || 0.96,
+      onEnd: () => setPreviewing(false),
+      onError: () => setPreviewing(false),
+    })
+  }
+
+  function previewSupertonic() {
+    cancelNeuralSpeech()
+    cancelSupertonicSpeech()
+    setPreviewing(true)
+    void speakSupertonic('Hi Jonard. I am Nebula. This is the optional Supertonic voice.', {
+      voice: settings.voiceSupertonicVoice,
+      speed: settings.voiceRate || 1.02,
+      onEnd: () => setPreviewing(false),
+      onError: () => setPreviewing(false),
+    })
+  }
+
+  return (
+    <div className="settings-voice-output">
+      <label className="settings-field">
+        <span>Voice output</span>
+        <select value={mode} onChange={(event) => onChange({ voiceSynthesisMode: event.target.value as AppSettings['voiceSynthesisMode'] })}>
+          <option value="neural_local">Nebula Neural (recommended)</option>
+          <option value="supertonic">Supertonic (optional)</option>
+          <option value="system">Windows system voice</option>
+        </select>
+      </label>
+      {mode === 'neural_local' ? (
+        <>
+          <label className="settings-field">
+            <span>Neural personality</span>
+            <select value={settings.voiceNeuralVoice || 'af_heart'} onChange={(event) => onChange({ voiceNeuralVoice: event.target.value })}>
+              {NEURAL_VOICES.map((voice) => <option key={voice.id} value={voice.id}>{voice.name} - {voice.description}</option>)}
+            </select>
+          </label>
+          <div className="settings-model-source">
+            <span>{status.message}</span>
+            {status.phase === 'downloading' && <small>{Math.round(status.progress)}%</small>}
+          </div>
+          <button className="settings-secondary-action" type="button" disabled={previewing || status.phase === 'downloading'} onClick={previewNeural}>
+            {previewing ? 'Playing preview...' : status.phase === 'downloading' ? 'Downloading voice...' : 'Preview neural voice'}
+          </button>
+          <p className="settings-help-text">The neural model downloads once and runs locally. Windows voice is used automatically if it cannot start.</p>
+        </>
+      ) : mode === 'supertonic' ? (
+        <>
+          <label className="settings-field">
+            <span>Supertonic voice</span>
+            <select value={settings.voiceSupertonicVoice || 'F1'} onChange={(event) => onChange({ voiceSupertonicVoice: event.target.value })}>
+              {SUPERTONIC_VOICES.map((voice) => <option key={voice.id} value={voice.id}>{voice.name} - {voice.description}</option>)}
+            </select>
+          </label>
+          <div className="settings-model-source"><span>{supertonicStatus.message}</span></div>
+          <button className="settings-secondary-action" type="button" disabled={previewing || supertonicStatus.phase === 'generating'} onClick={previewSupertonic}>
+            {previewing ? 'Playing preview...' : supertonicStatus.phase === 'generating' ? 'Generating preview...' : 'Preview Supertonic'}
+          </button>
+          <p className="settings-help-text">Optional local expressive voice. It loads only when selected and falls back to Windows voice if unavailable.</p>
+        </>
+      ) : (
+        <SpeechVoiceSelector value={settings.voiceSystemVoice ?? ''} language={settings.voiceLanguage ?? 'en-US'} rate={settings.voiceRate ?? 1} pitch={settings.voicePitch ?? 1} onChange={(voiceSystemVoice) => onChange({ voiceSystemVoice })} />
+      )}
+    </div>
+  )
+}
+
+function SpeechVoiceSelector({ value, language, rate, pitch, onChange }: { value: string; language: string; rate: number; pitch: number; onChange: (value: string) => void }) {
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
+
+  useEffect(() => {
+    if (!('speechSynthesis' in window)) return
+    const refresh = () => setVoices([...window.speechSynthesis.getVoices()].sort((left, right) => left.lang.localeCompare(right.lang) || left.name.localeCompare(right.name)))
+    refresh()
+    window.speechSynthesis.addEventListener('voiceschanged', refresh)
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', refresh)
+  }, [])
+
+  function preview() {
+    if (!('speechSynthesis' in window)) return
+    window.speechSynthesis.cancel()
+    const utterance = new SpeechSynthesisUtterance('Hi Jonard. I am Nebula. This is how my voice sounds now.')
+    utterance.lang = language
+    utterance.voice = selectSpeechVoice(voices, value, language)
+    utterance.rate = value ? rate : Math.min(rate, 0.94)
+    utterance.pitch = value ? pitch : Math.max(pitch, 1.02)
+    utterance.volume = value ? 1 : 0.92
+    window.speechSynthesis.speak(utterance)
+  }
+
+  const missing = Boolean(value) && !voices.some((voice) => voice.name === value || voice.voiceURI === value)
+  return (
+    <div className="settings-voice-select">
+      <label className="block space-y-1">
+        <span className="text-slate-400">Reply voice</span>
+        <select className="nebula-input w-full px-2 py-2 outline-none" value={value} onChange={(event) => onChange(event.target.value)}>
+          <option value="">Automatic (most natural)</option>
+          {missing && <option value={value}>{value} (unavailable)</option>}
+          {voices.map((voice) => <option key={voice.voiceURI} value={voice.name}>{voice.name} ({voice.lang})</option>)}
+        </select>
+      </label>
+      <button className="settings-secondary-action" type="button" onClick={preview}>Preview voice</button>
+    </div>
   )
 }
 
@@ -450,33 +695,6 @@ function MemoryReviewSelector({ value, onChange }: { value: AppSettings['memoryR
         <option value="manual">Manual only</option>
       </select>
     </label>
-  )
-}
-
-function ActionModeSelector({ value, onChange }: { value: AppSettings['actionMode']; onChange: (value: AppSettings['actionMode']) => void }) {
-  const modes: Array<{ id: AppSettings['actionMode']; label: string; hint: string }> = [
-    { id: 'fast', label: 'Fast', hint: 'No popups for normal actions' },
-    { id: 'guarded', label: 'Guarded', hint: 'Ask before risky changes' },
-    { id: 'strict', label: 'Strict', hint: 'Ask before every tool action' },
-  ]
-
-  return (
-    <div className="space-y-2">
-      <span className="text-slate-400">Action mode</span>
-      <div className="grid grid-cols-3 gap-1 rounded-[8px] border border-white/10 bg-black/20 p-1">
-        {modes.map((mode) => (
-          <button
-            key={mode.id}
-            className={`rounded-[6px] px-2 py-2 text-left transition ${value === mode.id ? 'bg-cyan-300/18 text-cyan-50 shadow-[0_0_18px_rgba(34,211,238,0.14)]' : 'text-slate-500 hover:bg-white/[0.04] hover:text-slate-200'}`}
-            type="button"
-            onClick={() => onChange(mode.id)}
-          >
-            <div className="text-xs font-semibold">{mode.label}</div>
-            <div className="mt-1 text-[10px] leading-3 opacity-70">{mode.hint}</div>
-          </button>
-        ))}
-      </div>
-    </div>
   )
 }
 

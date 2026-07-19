@@ -13,6 +13,7 @@ export interface NebulaContextHints {
     content: string
   } | null
   recentLogs?: LogEvent[]
+  executionSource?: 'desktop' | 'mobile' | 'voice' | 'automation'
 }
 
 const METADATA_FILES = [

@@ -1,10 +1,9 @@
-import { ChevronLeft, ChevronRight, FolderOpen, PlugZap, Shield, Sparkles, X } from 'lucide-react'
+import { CheckCircle2, ChevronDown, FolderOpen, LoaderCircle, PlugZap, Sparkles, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { open } from '@tauri-apps/plugin-dialog'
 import { checkLmStudio, listLmStudioModelInfos } from '../lib/lmstudio'
-import type { SetupWizardState } from '../types/nebula'
+import type { ModelInfo } from '../types/nebula'
 import type { AppSettings } from '../types/settings'
-
-const steps: SetupWizardState['step'][] = ['welcome', 'lmstudio', 'workspace', 'permissions']
 
 interface Props {
   open: boolean
@@ -13,207 +12,141 @@ interface Props {
   onClose: () => void
 }
 
-export function SetupWizard({ open, settings, onChange, onClose }: Props) {
-  const [stepIndex, setStepIndex] = useState(0)
-  const [checking, setChecking] = useState(false)
-  const [checkMessage, setCheckMessage] = useState('')
-  const [discoveredModels, setDiscoveredModels] = useState<string[]>([])
-  const [draft, setDraft] = useState<SetupWizardState>(() => ({
-    step: 'welcome',
-    checkedLmStudio: false,
-    lmStudioOnline: false,
-    selectedProjectFolder: settings.projectFolder,
-    selectedMemoryFolder: settings.memoryFolder,
-    dailyModel: settings.modelAssignments?.daily || settings.fastModel,
-    codeModel: settings.modelAssignments?.code || settings.codeModel,
-    reviewModel: settings.modelAssignments?.review || settings.reviewModel,
-  }))
-  const step = steps[stepIndex]
-  const progress = useMemo(() => Math.round(((stepIndex + 1) / steps.length) * 100), [stepIndex])
+function modelScore(model: ModelInfo) {
+  const id = `${model.id} ${model.displayName}`.toLowerCase()
+  if (/nebula.*qwen|qwen.*nebula|qwen2\.5-coder-1\.5b-v1/.test(id)) return 100
+  if (model.loaded) return 60
+  if (/instruct|chat/.test(id)) return 30
+  return 10
+}
+
+function recommendedModel(models: ModelInfo[], configured: string) {
+  if (models.length === 0) return configured
+  return [...models].sort((left, right) => modelScore(right) - modelScore(left))[0]?.id || configured
+}
+
+function codingModel(models: ModelInfo[], fallback: string) {
+  return models.find((model) => /coder|code/i.test(`${model.id} ${model.displayName}`))?.id || fallback
+}
+
+function reviewModel(models: ModelInfo[], fallback: string) {
+  return models.find((model) => /review|gpt-oss|20b|14b/i.test(`${model.id} ${model.displayName}`))?.id || fallback
+}
+
+export function SetupWizard({ open: isOpen, settings, onChange, onClose }: Props) {
+  const [discovering, setDiscovering] = useState(false)
+  const [online, setOnline] = useState(false)
+  const [status, setStatus] = useState('Checking your local AI...')
+  const [models, setModels] = useState<ModelInfo[]>([])
+  const [selectedModel, setSelectedModel] = useState(settings.modelAssignments?.daily || settings.fastModel || settings.model)
+  const [projectFolder, setProjectFolder] = useState(settings.projectFolder)
+  const [memoryFolder, setMemoryFolder] = useState(settings.memoryFolder || 'memory')
+  const [detailsOpen, setDetailsOpen] = useState(false)
 
   useEffect(() => {
-    if (!open) return
+    if (!isOpen) return
     let cancelled = false
-    void listLmStudioModelInfos(settings).then((models) => {
+    setDiscovering(true)
+    setStatus('Checking your local AI...')
+    void Promise.allSettled([checkLmStudio(settings), listLmStudioModelInfos(settings)]).then(([healthResult, modelsResult]) => {
       if (cancelled) return
-      const ids = models.map((model) => model.id)
-      setDiscoveredModels(ids)
-      const recommended = ids.find((id) => /nebula.*qwen|qwen.*nebula/i.test(id))
-      if (recommended && !ids.includes(draft.dailyModel)) patch({ dailyModel: recommended })
-    }).catch(() => setDiscoveredModels([]))
+      const discovered = modelsResult.status === 'fulfilled' ? modelsResult.value : []
+      const reachable = healthResult.status === 'fulfilled' ? healthResult.value.online : modelsResult.status === 'fulfilled'
+      setModels(discovered)
+      setOnline(reachable)
+      const recommendation = recommendedModel(discovered, selectedModel)
+      setSelectedModel(recommendation)
+      if (reachable && discovered.length) setStatus(`${discovered.length} local model${discovered.length === 1 ? '' : 's'} found. Nebula is ready.`)
+      else if (reachable) setStatus('LM Studio is connected, but no local models were found.')
+      else setStatus('LM Studio is offline. You can finish now and connect it later.')
+    }).finally(() => {
+      if (!cancelled) setDiscovering(false)
+    })
     return () => { cancelled = true }
-  }, [draft.dailyModel, open, settings])
+    // Setup discovery intentionally runs once each time the wizard opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen])
 
-  if (!open) return null
+  const selectedInfo = useMemo(() => models.find((model) => model.id === selectedModel), [models, selectedModel])
 
-  function patch(update: Partial<SetupWizardState>) {
-    setDraft((current) => ({ ...current, ...update }))
-  }
+  if (!isOpen) return null
 
-  async function runConnectionCheck() {
-    setChecking(true)
-    setCheckMessage('')
-    try {
-      const status = await checkLmStudio({ ...settings, model: draft.dailyModel || settings.model })
-      patch({ checkedLmStudio: true, lmStudioOnline: status.online })
-      setCheckMessage(status.online ? 'LM Studio responded. If a model is unloaded, Nebula can still auto-load it later.' : status.error ?? 'LM Studio did not respond.')
-    } catch (error) {
-      patch({ checkedLmStudio: true, lmStudioOnline: false })
-      setCheckMessage(error instanceof Error ? error.message : String(error))
-    } finally {
-      setChecking(false)
-    }
+  async function chooseProject() {
+    const selected = await open({ directory: true, multiple: false, title: 'Choose an optional project folder' })
+    const path = Array.isArray(selected) ? selected[0] : selected
+    if (path) setProjectFolder(path)
   }
 
   function finish() {
-    const now = new Date().toISOString()
+    const daily = selectedModel || settings.modelAssignments?.daily || settings.fastModel || settings.model
+    const code = codingModel(models, settings.modelAssignments?.code || settings.codeModel || daily)
+    const review = reviewModel(models, settings.modelAssignments?.review || settings.reviewModel || code)
     onChange({
       ...settings,
+      experienceMode: 'simple',
       modelProvider: 'lmstudio',
-      model: draft.dailyModel || settings.model,
-      fastModel: draft.dailyModel || settings.fastModel,
-      codeModel: draft.codeModel || settings.codeModel,
-      reviewModel: draft.reviewModel || settings.reviewModel,
-      modelAssignments: {
-        daily: draft.dailyModel || settings.modelAssignments.daily,
-        code: draft.codeModel || settings.modelAssignments.code,
-        review: draft.reviewModel || settings.modelAssignments.review,
-      },
-      projectFolder: draft.selectedProjectFolder,
-      memoryFolder: draft.selectedMemoryFolder || 'memory',
+      model: daily,
+      fastModel: daily,
+      codeModel: code,
+      reviewModel: review,
+      modelAssignments: { daily, code, review },
+      modelMode: 'auto',
+      autoLoadModels: true,
+      projectFolder,
+      memoryFolder: memoryFolder || 'memory',
       setupWizardCompleted: true,
-      setupWizardLastRunAt: now,
-      overlayQuickActionsEnabled: true,
-      modelProfilerEnabled: true,
+      setupWizardLastRunAt: new Date().toISOString(),
+      showModelDebugInfo: false,
     })
     onClose()
   }
 
   return (
     <div className="setup-wizard-backdrop" role="presentation">
-      <section className="setup-wizard" role="dialog" aria-modal="true" aria-label="Nebula setup wizard">
+      <section className="setup-wizard setup-wizard-simple" role="dialog" aria-modal="true" aria-label="Set up Nebula">
         <header className="setup-wizard-header">
           <div>
-            <div className="setup-wizard-kicker">Nebula setup</div>
-            <h2>{titleForStep(step)}</h2>
+            <div className="setup-wizard-kicker">Private. Local. Yours.</div>
+            <h2>Meet Nebula</h2>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close setup wizard">
-            <X size={16} />
-          </button>
+          <button type="button" onClick={onClose} aria-label="Close setup"><X size={16} /></button>
         </header>
 
-        <div className="setup-wizard-progress">
-          <span style={{ width: `${progress}%` }} />
-        </div>
-
         <main className="setup-wizard-body">
-          {step === 'welcome' && (
-            <WizardCard icon={<Sparkles size={18} />} title="Local-first command center">
-              <p>This wizard checks the basics: LM Studio endpoint, model roles, workspace, memory, permissions, and daily-use defaults.</p>
-              <p>No cloud keys are required and no model is forcibly unloaded.</p>
-            </WizardCard>
-          )}
+          <section className="setup-wizard-card setup-ready-card">
+            <div className="setup-wizard-card-title">
+              {discovering ? <LoaderCircle className="setup-spin" size={18} /> : online ? <CheckCircle2 size={18} /> : <PlugZap size={18} />}
+              <h3>{discovering ? 'Getting ready' : online ? 'Local AI connected' : 'Connect when ready'}</h3>
+            </div>
+            <p>{status}</p>
+            {selectedModel && <label>
+              Recommended assistant
+              <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)}>
+                {!models.some((model) => model.id === selectedModel) && <option value={selectedModel}>{selectedModel} (configured)</option>}
+                {models.map((model) => <option key={model.id} value={model.id}>{model.displayName || model.id}{model.loaded ? ' - ready' : ''}</option>)}
+              </select>
+              {selectedInfo && <small>{selectedInfo.loaded ? 'Already loaded and ready to answer.' : 'Nebula will load this model when needed.'}</small>}
+            </label>}
+          </section>
 
-          {step === 'lmstudio' && (
-            <WizardCard icon={<PlugZap size={18} />} title="Provider and models">
-              <label>
-                Endpoint
-                <input value={settings.endpoint} onChange={(event) => onChange({ ...settings, endpoint: event.target.value })} />
-              </label>
-              <button type="button" className="setup-wizard-primary" onClick={runConnectionCheck} disabled={checking}>
-                {checking ? 'Checking...' : 'Check LM Studio'}
-              </button>
-              {checkMessage && <p className={draft.lmStudioOnline ? 'setup-good' : 'setup-warn'}>{checkMessage}</p>}
-              {!draft.lmStudioOnline && <p className="setup-warn">You can finish setup offline and reconnect from Model Doctor later.</p>}
-              <ModelField label="Daily chat model" value={draft.dailyModel} models={discoveredModels} onChange={(dailyModel) => patch({ dailyModel })} />
-              <ModelField label="Coding model" value={draft.codeModel} models={discoveredModels} onChange={(codeModel) => patch({ codeModel })} />
-              <ModelField label="Review model" value={draft.reviewModel} models={discoveredModels} onChange={(reviewModel) => patch({ reviewModel })} />
-            </WizardCard>
-          )}
+          <button type="button" className="setup-project-choice" onClick={() => void chooseProject()}>
+            <FolderOpen size={17} />
+            <span><strong>{projectFolder ? projectFolder.split(/[\\/]/).filter(Boolean).at(-1) : 'Choose a project later'}</strong><small>{projectFolder || 'Optional. Chat works without a project.'}</small></span>
+          </button>
 
-          {step === 'workspace' && (
-            <WizardCard icon={<FolderOpen size={18} />} title="Workspace and memory">
-              <label>
-                Project folder
-                <input value={draft.selectedProjectFolder} onChange={(event) => patch({ selectedProjectFolder: event.target.value })} placeholder="Optional project folder path" />
-              </label>
-              <label>
-                Memory folder
-                <input value={draft.selectedMemoryFolder} onChange={(event) => patch({ selectedMemoryFolder: event.target.value })} placeholder="memory" />
-              </label>
-            </WizardCard>
-          )}
+          <details className="setup-details" open={detailsOpen} onToggle={(event) => setDetailsOpen(event.currentTarget.open)}>
+            <summary><ChevronDown size={14} />Change setup</summary>
+            <label>LM Studio endpoint<input value={settings.endpoint} onChange={(event) => onChange({ ...settings, endpoint: event.target.value })} /></label>
+            <label>Memory folder<input value={memoryFolder} onChange={(event) => setMemoryFolder(event.target.value)} /></label>
+          </details>
 
-          {step === 'permissions' && (
-            <WizardCard icon={<Shield size={18} />} title="Recommended permissions">
-              <PermissionToggle label="Auto-load routed models" checked={settings.autoLoadModels} onChange={(autoLoadModels) => onChange({ ...settings, autoLoadModels })} />
-              <PermissionToggle label="Keep daily model warm" checked={settings.keepDailyModelWarm} onChange={(keepDailyModelWarm) => onChange({ ...settings, keepDailyModelWarm })} />
-              <PermissionToggle label="Automation scheduler" checked={settings.automationSchedulerEnabled} onChange={(automationSchedulerEnabled) => onChange({ ...settings, automationSchedulerEnabled })} />
-              <PermissionToggle label="Voice input" checked={settings.voiceEnabled} onChange={(voiceEnabled) => onChange({ ...settings, voiceEnabled })} />
-              <PermissionToggle label="Screenshot Ask Mode" checked={settings.screenshotAskEnabled} onChange={(screenshotAskEnabled) => onChange({ ...settings, screenshotAskEnabled })} />
-            </WizardCard>
-          )}
-
+          <div className="setup-privacy-note"><Sparkles size={14} /><span>Your conversations, memory, and tools stay on this PC unless you explicitly use a web or cloud feature.</span></div>
         </main>
 
-        <footer className="setup-wizard-footer">
-          <button type="button" disabled={stepIndex === 0} onClick={() => setStepIndex((current) => Math.max(0, current - 1))}>
-            <ChevronLeft size={14} />
-            Back
-          </button>
-          {step === 'permissions' ? (
-            <button type="button" className="setup-wizard-primary" onClick={finish}>
-              Finish setup
-            </button>
-          ) : (
-            <button type="button" className="setup-wizard-primary" onClick={() => setStepIndex((current) => Math.min(steps.length - 1, current + 1))}>
-              Next
-              <ChevronRight size={14} />
-            </button>
-          )}
+        <footer className="setup-wizard-footer setup-wizard-footer-simple">
+          <button type="button" className="setup-wizard-primary" onClick={finish}>Continue to Nebula</button>
         </footer>
       </section>
     </div>
-  )
-}
-
-function titleForStep(step: SetupWizardState['step']) {
-  if (step === 'lmstudio') return 'Connect LM Studio'
-  if (step === 'workspace') return 'Choose workspace'
-  if (step === 'permissions') return 'Set permissions'
-  return 'Welcome'
-}
-
-function WizardCard({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
-  return (
-    <section className="setup-wizard-card">
-      <div className="setup-wizard-card-title">
-        {icon}
-        <h3>{title}</h3>
-      </div>
-      {children}
-    </section>
-  )
-}
-
-function ModelField({ label, value, models, onChange }: { label: string; value: string; models: string[]; onChange: (value: string) => void }) {
-  return (
-    <label>
-      {label}
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
-        {value && !models.includes(value) && <option value={value}>{value} (configured)</option>}
-        {models.length === 0 && !value && <option value="">Discover after setup</option>}
-        {models.map((model) => <option key={model} value={model}>{model}</option>)}
-      </select>
-    </label>
-  )
-}
-
-function PermissionToggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
-  return (
-    <label className="setup-permission-toggle">
-      <span>{label}</span>
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
-    </label>
   )
 }

@@ -1,12 +1,13 @@
 import type { AppSettings } from '../types/settings'
 import type { ToolName, ToolRequest, ToolResult } from '../types/tools'
-import { listFiles, readFile } from './fileSystem'
+import { appendFile, createFile, listFiles, readFile, writeFile } from './fileSystem'
 import { getSystemInfo, openApp, runCommand, sleepPc, stopRunningCommand } from './commandRunner'
 import { appendMemory, searchMemory } from './memory'
 import { queuePatchFromTool } from './patchQueue'
 import { captureScreen } from './screen'
 import { webFetch, webSearch } from './web'
 import { throwIfRunCancelled } from './agentRun'
+import { getRuntimeExecutionGrant } from './runtimeExecution'
 
 const PROJECT_FILE_TOOLS = new Set(['list_files', 'read_file', 'write_file', 'create_file', 'append_file'])
 
@@ -132,7 +133,11 @@ export async function executeTool(request: ToolRequest, settings: AppSettings, s
         await sleepPc()
         return { ok: true, tool: request.tool, output: 'Sleep command sent.' }
       case 'open_app':
-        await openApp(String(args.app ?? args.path ?? ''))
+        {
+          const requested = String(args.app ?? args.path ?? '').trim()
+          const target = settings.trustedAppAliases?.[requested.toLowerCase()] || requested
+          await openApp(target)
+        }
         return { ok: true, tool: request.tool, output: 'App opened.' }
       case 'list_files':
         return { ok: true, tool: request.tool, output: await listFiles(String(args.path ?? settings.projectFolder)) }
@@ -141,6 +146,14 @@ export async function executeTool(request: ToolRequest, settings: AppSettings, s
       case 'write_file':
       case 'create_file':
       case 'append_file': {
+        if (getRuntimeExecutionGrant().mode === 'full') {
+          const path = String(args.path ?? '')
+          const content = String(args.content ?? '')
+          if (request.tool === 'write_file') await writeFile(path, content)
+          else if (request.tool === 'create_file') await createFile(path, content)
+          else await appendFile(path, content)
+          return { ok: true, tool: request.tool, output: { path, operation: request.tool, applied: true } }
+        }
         const proposal = await queuePatchFromTool(
           request.tool,
           String(args.path ?? ''),

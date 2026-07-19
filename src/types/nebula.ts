@@ -581,7 +581,12 @@ export interface VoiceDiagnosticSnapshot {
   supported: boolean
   permission: 'unknown' | 'granted' | 'denied' | 'prompt' | 'unsupported'
   language: string
+  engine?: import('./voice').VoiceEngine
+  localAvailability?: 'available' | 'downloadable' | 'downloading' | 'unavailable' | 'unknown'
+  lastErrorCode?: import('./voice').VoiceErrorCode
+  recognitionLatencyMs?: number
   lastTranscriptAt?: string
+  lastTranscriptPreview?: string
   lastError?: string
   checkedAt: string
 }

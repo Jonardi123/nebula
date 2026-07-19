@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import type { ComposerAttachment } from '../types/nebula'
 import type { AppSettings } from '../types/settings'
 import { isPrivateOrLocalUrl } from './web'
+import { getRuntimeExecutionGrant, setRuntimeExecutionMode } from './runtimeExecution'
 
 export interface RemoteRunRequest {
   runId: string
@@ -174,7 +175,8 @@ export function mobileControlSnapshot(settings: AppSettings) {
     autoWebSearch: settings.autoWebSearch,
     maxAutoFetchPages: settings.maxAutoFetchPages,
     memoryReviewMode: settings.memoryReviewMode,
-    actionMode: settings.actionMode,
+    actionMode: getRuntimeExecutionGrant().mode === 'full' ? 'full' : settings.actionMode,
+    visualTheme: settings.theme,
   }
 }
 
@@ -188,7 +190,14 @@ export function applyMobileControlChange(settings: AppSettings, change: Record<s
   assign('backgroundPreloadCodeModel'); assign('enableAutomaticReviewPass')
   assign('temperature'); assign('maxTokens'); assign('contextInjectionEnabled')
   assign('contextBudgetChars'); assign('autoWebSearch'); assign('maxAutoFetchPages')
-  assign('memoryReviewMode'); assign('actionMode')
+  assign('memoryReviewMode'); assign('theme')
+  if (change.actionMode === 'full') {
+    setRuntimeExecutionMode('full', 'mobile', typeof change.fullAccessConfirmation === 'string' ? change.fullAccessConfirmation : undefined)
+  } else if (change.actionMode === 'approval' || change.actionMode === 'safe') {
+    setRuntimeExecutionMode(change.actionMode, 'mobile')
+    next.actionMode = change.actionMode
+  }
+  if (change.visualTheme === 'black_matter' || change.visualTheme === 'original') next.theme = change.visualTheme
   const daily = typeof change.dailyModel === 'string' ? change.dailyModel : settings.modelAssignments.daily
   const code = typeof change.codeModel === 'string' ? change.codeModel : settings.modelAssignments.code
   const review = typeof change.reviewModel === 'string' ? change.reviewModel : settings.modelAssignments.review
@@ -197,6 +206,6 @@ export function applyMobileControlChange(settings: AppSettings, change: Record<s
   next.codeModel = code
   next.reviewModel = review
   if (typeof change.singleModel === 'string' && change.singleModel) next.model = change.singleModel
-  next.requireApproval = next.actionMode !== 'fast'
+  next.requireApproval = next.actionMode === 'approval'
   return next
 }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { listen } from '@tauri-apps/api/event'
+import { emit, listen } from '@tauri-apps/api/event'
+import { invoke } from '@tauri-apps/api/core'
 import { AmbientAssistant } from './components/AmbientAssistant'
 import { ApprovalModal } from './components/ApprovalModal'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -8,6 +9,7 @@ import { Sidebar, type SidebarTab } from './components/Sidebar'
 import { SetupWizard } from './components/SetupWizard'
 import { SplashScreen } from './components/SplashScreen'
 import { TopBar } from './components/TopBar'
+import { TerminalPanel } from './components/TerminalPanel'
 import { WorkspaceRail } from './components/WorkspaceRail'
 import { CommandCenter } from './components/CommandCenter'
 import { useSettings } from './hooks/useSettings'
@@ -18,7 +20,7 @@ import { useProjectFiles } from './hooks/useProjectFiles'
 import { runAgentLoop } from './lib/agent'
 import { runStartupRoutines, runTriggeredRoutines, startAutomationScheduler } from './lib/automationScheduler'
 import { openAmbientOverlay, registerAmbientShortcut, registerBackgroundClose, setLaunchAtStartup } from './lib/background'
-import { cancelActiveLmStudioRequests, checkLmStudio, listLmStudioModelInfos } from './lib/lmstudio'
+import { cancelActiveLmStudioRequests, checkLmStudio, listLmStudioModelInfos, loadLmStudioModel } from './lib/lmstudio'
 import { createLog } from './lib/logger'
 import { ensureMemory } from './lib/memory'
 import { warmModelInBackground, type ModelManagerEvent } from './lib/modelManager'
@@ -31,7 +33,10 @@ import { detectProjectProfile } from './lib/projectProfiles'
 import { appendTaskEvent, attachTaskSourceCard, recordTaskArtifact } from './lib/runReplay'
 import { captureScreen, type ScreenCaptureResult } from './lib/screen'
 import { loadSettings } from './lib/settings'
+import { BlackMatterWhatsNew } from './components/BlackMatterWhatsNew'
+import { detectLocalUiIntent } from './lib/uiIntent'
 import { stopRunningCommand } from './lib/commandRunner'
+import { subscribeRuntimeExecution } from './lib/runtimeExecution'
 import { proposeMemory } from './lib/memoryInbox'
 import { recordModelRun, recordModelLoadMetric } from './lib/modelStats'
 import { createSourceCardFromFetch, createSourceCardsFromSearch } from './lib/sourceCards'
@@ -49,8 +54,9 @@ import type { ApprovalRequest, ToolResult } from './types/tools'
 import type { WebFetchResult, WebSearchResult } from './lib/web'
 import { getEnabledToolNames } from './skills'
 import type { AppSettings } from './types/settings'
+import type { VoiceApprovalDecision, VoiceRequest, VoiceRunEvent } from './types/voice'
 import { AgentRunController } from './lib/agentRun'
-import { normalizeNebulaError } from './lib/nebulaError'
+import { normalizeNebulaError, userFacingNebulaError, type UserFacingError } from './lib/nebulaError'
 import { conversationRepository, initializeStorage } from './lib/storage'
 import {
   createMobileRunSink,
@@ -164,6 +170,7 @@ export default function App() {
   const [approval, setApproval] = useState<ApprovalRequest | null>(null)
   const [skillsVersion, setSkillsVersion] = useState(0)
   const [ambientActive, setAmbientActive] = useState(false)
+  const [ambientRunEvent, setAmbientRunEvent] = useState<VoiceRunEvent | null>(null)
   const [latestCapture, setLatestCapture] = useState<ScreenCaptureResult | null>(null)
   const [captureError, setCaptureError] = useState('')
   const [notificationCount, setNotificationCount] = useState(getUnreadNotificationCount)
@@ -171,18 +178,29 @@ export default function App() {
   const [commandCenterOpen, setCommandCenterOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [inspectorOpen, setInspectorOpen] = useState(false)
+  const [terminalOpen, setTerminalOpen] = useState(false)
+  const [runtimeGrantVersion, setRuntimeGrantVersion] = useState(0)
   const [sidebarTab, setSidebarTab] = useState<SidebarTab | null>(null)
   const [setupWizardOpen, setSetupWizardOpen] = useState(() => !import.meta.env.DEV && !loadSettings().setupWizardCompleted)
   const [recoveryNotice, setRecoveryNotice] = useState('')
+  const [runRecovery, setRunRecovery] = useState<{ error: UserFacingError; content: string; sourceMessageId: string; attachments: ComposerAttachment[] } | null>(null)
+
+  useEffect(() => subscribeRuntimeExecution(() => setRuntimeGrantVersion((current) => current + 1)), [])
+  const [recoveryBusy, setRecoveryBusy] = useState(false)
   const { files, openedFile, setOpenedFile, chooseProject, openFile } = useProjectFiles({ settings, setSettings, workspaceAwareness, addLog })
   const approvalResolver = useRef<((approved: boolean) => void) | null>(null)
   const stopped = useRef(false)
   const activeRun = useRef<AgentRunController | null>(null)
   const activeMobileRun = useRef<{ request: RemoteRunRequest; sink: ReturnType<typeof createMobileRunSink> } | null>(null)
+  const activeAmbientRequest = useRef<VoiceRequest | null>(null)
+  const ambientApprovalId = useRef('')
   const remoteApproval = useRef<{ runId: string; approvalId: string } | null>(null)
   const mobileRunRequestHandler = useRef<(request: RemoteRunRequest) => void>(() => undefined)
   const mobileCancelHandler = useRef<(request: RemoteRunCancel) => void>(() => undefined)
   const mobileApprovalHandler = useRef<(decision: RemoteApprovalDecision) => void>(() => undefined)
+  const ambientSubmitHandler = useRef<(request: VoiceRequest) => void>(() => undefined)
+  const ambientCancelHandler = useRef<(requestId: string) => void>(() => undefined)
+  const ambientApprovalHandler = useRef<(decision: VoiceApprovalDecision) => void>(() => undefined)
   const ambientHoldTimer = useRef<number | null>(null)
   const ambientHideTimer = useRef<number | null>(null)
   const draftWarmTimer = useRef<number | null>(null)
@@ -680,23 +698,60 @@ export default function App() {
     }
   }
 
-  async function sendMessage(content: string, taskId?: string, attachments: ComposerAttachment[] = [], remoteRequest?: RemoteRunRequest) {
+  async function sendMessage(content: string, taskId?: string, attachments: ComposerAttachment[] = [], remoteRequest?: RemoteRunRequest, retrySourceMessageId?: string, settingsOverride?: AppSettings, voiceRequest?: VoiceRequest) {
+    if (!remoteRequest) setRunRecovery(null)
     const mobileSink = remoteRequest ? createMobileRunSink(remoteRequest.runId) : null
     if (remoteRequest && activeRun.current) {
       await mobileSink?.event('error', { message: 'Nebula is already working on a request from another surface.', code: 'agent_busy' })
+      return
+    }
+    if (voiceRequest && activeRun.current) {
+      await emit('ambient-run-event', { requestId: voiceRequest.requestId, type: 'error', message: 'Nebula is already working. Stop the active task or wait for it to finish.' } satisfies VoiceRunEvent).catch(() => undefined)
+      return
+    }
+    const localUiIntent = !remoteRequest && !voiceRequest && attachments.length === 0
+      ? detectLocalUiIntent(content)
+      : null
+    if (localUiIntent?.type === 'open_windows_settings') {
+      const userMessage = createMessage('user', content)
+      setMessages((current) => [...current, userMessage])
+      addLog(createLog('user_message', content))
+      try {
+        await invoke('open_windows_settings')
+        const confirmation = createMessage('assistant', localUiIntent.confirmation)
+        setMessages((current) => [...current, confirmation])
+        addLog(createLog('status', localUiIntent.confirmation, { confirmed: true }))
+      } catch (error) {
+        const message = `Windows Settings could not be opened: ${String(error)}`
+        setMessages((current) => [...current, createMessage('assistant', message)])
+        addLog(createLog('error', message))
+      }
+      return
+    }
+    if (localUiIntent?.type === 'open_panel') {
+      const userMessage = createMessage('user', content)
+      const confirmation = createMessage('assistant', localUiIntent.confirmation)
+      setSidebarCollapsed(false)
+      setSidebarTab(localUiIntent.panel)
+      setMessages((current) => [...current, userMessage, confirmation])
+      addLog(createLog('user_message', content))
+      addLog(createLog('status', localUiIntent.confirmation, { panel: localUiIntent.panel, confirmed: true }))
+      appendTaskEvent(taskId, { type: 'notification', label: localUiIntent.confirmation, detail: `Opened ${localUiIntent.panel} from a deterministic local UI command.` })
       return
     }
     if (!remoteRequest) activeRun.current?.cancel('superseded')
     const run = new AgentRunController()
     activeRun.current = run
     if (remoteRequest && mobileSink) activeMobileRun.current = { request: remoteRequest, sink: mobileSink }
+    if (voiceRequest) activeAmbientRequest.current = voiceRequest
     run.start()
     stopped.current = false
     const targetConversationId = remoteRequest?.conversationId || activeConversationId
     const targetSession = conversations.find((conversation) => conversation.id === targetConversationId)
     const allTargetMessages = targetSession?.messages ?? (targetConversationId === activeConversationId ? messages : [])
-    const sourceIndex = remoteRequest?.sourceMessageId
-      ? allTargetMessages.findIndex((message) => message.id === remoteRequest.sourceMessageId)
+    const sourceMessageId = remoteRequest?.sourceMessageId || retrySourceMessageId
+    const sourceIndex = sourceMessageId
+      ? allTargetMessages.findIndex((message) => message.id === sourceMessageId)
       : -1
     const targetHistory = (sourceIndex >= 0 ? allTargetMessages.slice(0, sourceIndex) : allTargetMessages).slice(-16)
     const updateTargetMessages = (update: React.SetStateAction<import('./types/agent').ChatMessage[]>) => {
@@ -707,12 +762,12 @@ export default function App() {
       ? allTargetMessages[sourceIndex]
       : undefined
     const userMessage = reusedSource ?? createMessage('user', content, attachments)
-    if (remoteRequest?.mode === 'retry' || remoteRequest?.mode === 'regenerate') {
+    if (retrySourceMessageId || remoteRequest?.mode === 'retry' || remoteRequest?.mode === 'regenerate') {
       if (!reusedSource) {
         await mobileSink?.event('error', { message: 'The original user message is no longer available.', code: 'source_message_not_found' })
         run.fail()
         if (activeRun.current === run) activeRun.current = null
-        if (activeMobileRun.current?.request.runId === remoteRequest.runId) activeMobileRun.current = null
+        if (remoteRequest && activeMobileRun.current?.request.runId === remoteRequest.runId) activeMobileRun.current = null
         await mobileSink?.flush()
         return
       }
@@ -724,6 +779,7 @@ export default function App() {
       updateTargetMessages((current) => [...current, userMessage])
     }
     await mobileSink?.event('accepted', { conversationId: targetConversationId })
+    if (voiceRequest) await emit('ambient-run-event', { requestId: voiceRequest.requestId, type: 'accepted' } satisfies VoiceRunEvent).catch(() => undefined)
     addLog(createLog('user_message', content))
     appendTaskEvent(taskId, { type: 'user_prompt', label: 'User prompt', detail: content })
     const attachmentContext = await buildComposerAttachmentContext(attachments)
@@ -734,7 +790,8 @@ export default function App() {
       : ''
     const agentContent = `${projectDirective}${intentDirective}${content}${attachmentContext}`
     const agentUserMessage = agentContent === content ? userMessage : { ...userMessage, content: agentContent }
-    const runSettings = settingsForMobileRun(settings, remoteRequest)
+    const effectiveSettings = settingsOverride ?? settings
+    const runSettings = settingsForMobileRun(effectiveSettings, remoteRequest)
 
     const history = targetHistory
     let runModel = settings.model
@@ -757,6 +814,7 @@ export default function App() {
           if (run.signal.aborted || activeRun.current !== run) return
           setAgentStatus(status)
           void mobileSink?.event('status', { status })
+          if (voiceRequest) void emit('ambient-run-event', { requestId: voiceRequest.requestId, type: status === 'thinking' ? 'thinking' : 'tool_activity', message: status } satisfies VoiceRunEvent)
           addLog(createLog('status', `Agent status: ${status}`))
         },
         onMessage: (message) => {
@@ -777,6 +835,7 @@ export default function App() {
           if (run.signal.aborted || activeRun.current !== run) return
           toolCallsForTraining.push(`${request.tool}: ${JSON.stringify(request.args)}`)
           void mobileSink?.event('tool_request', { request: { tool: request.tool, args: {} } })
+          if (voiceRequest) void emit('ambient-run-event', { requestId: voiceRequest.requestId, type: 'tool_activity', message: `Using ${request.tool.replaceAll('_', ' ')}` } satisfies VoiceRunEvent)
           addLog(createLog('tool_request', `${request.tool} requested`, request))
           appendTaskEvent(taskId, {
             type: 'tool_call',
@@ -894,6 +953,20 @@ export default function App() {
               remoteApproval.current = { runId: remoteRequest.runId, approvalId: request.id }
               void mobileSink?.event('approval_required', { approval: { ...request, runId: remoteRequest.runId } })
             }
+            if (voiceRequest) {
+              ambientApprovalId.current = request.id
+              void emit('ambient-run-event', {
+                requestId: voiceRequest.requestId,
+                type: 'approval_required',
+                approval: {
+                  id: request.id,
+                  title: `Approve ${request.toolRequest.tool.replaceAll('_', ' ')}`,
+                  detail: request.reason,
+                  risk: request.riskLevel,
+                  requiresTypedConfirmation: request.requiresTypedConfirm,
+                },
+              } satisfies VoiceRunEvent)
+            }
             addLog(createLog('approval', `Waiting for approval: ${request.toolRequest.tool}`))
           }),
       },
@@ -901,6 +974,7 @@ export default function App() {
         {
           openedFile,
           recentLogs: logs.slice(-24),
+          executionSource: remoteRequest ? 'mobile' : voiceRequest ? 'voice' : 'desktop',
         },
         run.signal,
       )
@@ -915,22 +989,38 @@ export default function App() {
         addLog(createLog('status', 'Request cancelled. Conversation context was preserved.'))
         appendTaskEvent(taskId, { type: 'notification', label: 'Task stopped', detail: 'The active request was cancelled by the user.' })
         await mobileSink?.event('cancelled', { message: 'Nebula stopped the active request.' })
+        if (voiceRequest) await emit('ambient-run-event', { requestId: voiceRequest.requestId, type: 'cancelled' } satisfies VoiceRunEvent).catch(() => undefined)
       } else {
-      const friendly = `Nebula could not complete that request: ${normalized.message}\n\nYour chat, project, memory, and task history are still available locally. Check Model Doctor if this was a model or LM Studio issue.`
+      const facing = userFacingNebulaError(error)
+      const retryable = toolCallsForTraining.length === 0 && Boolean(facing.action)
+      const friendly = `${facing.title}. ${facing.message}${retryable ? ' Use Fix it below to recover safely.' : ''}`
       errorsForTraining.push(message)
       setAgentStatus('error')
       addLog(createLog('error', `Agent loop failed safely: ${message}`))
       appendTaskEvent(taskId, { type: 'error', label: 'Agent request failed', detail: message })
       assistantTextBuffer += friendly
       updateTargetMessages((current) => [...current, createMessage('assistant', friendly)])
+      if (!remoteRequest) setRunRecovery({
+        error: retryable ? facing : { ...facing, action: undefined, actionLabel: undefined },
+        content,
+        sourceMessageId: userMessage.id,
+        attachments,
+      })
       await mobileSink?.event('error', { message: normalized.message, code: normalized.code })
+      if (voiceRequest) await emit('ambient-run-event', { requestId: voiceRequest.requestId, type: 'error', message: friendly } satisfies VoiceRunEvent).catch(() => undefined)
       }
     }
     await conversationRepository.flush().catch(() => undefined)
     if (mobileSink && !requestFailed && !stopped.current) await mobileSink.event('completed', { conversationId: targetConversationId })
+    if (voiceRequest && !requestFailed && !stopped.current) {
+      if (assistantTextBuffer.trim()) await emit('ambient-run-event', { requestId: voiceRequest.requestId, type: 'final', response: assistantTextBuffer.trim() } satisfies VoiceRunEvent).catch(() => undefined)
+      await new Promise((resolve) => window.setTimeout(resolve, 60))
+      await emit('ambient-run-event', { requestId: voiceRequest.requestId, type: 'completed' } satisfies VoiceRunEvent).catch(() => undefined)
+    }
     if (activeRun.current === run) activeRun.current = null
     if (remoteRequest && activeMobileRun.current?.request.runId === remoteRequest.runId) activeMobileRun.current = null
     if (remoteRequest && remoteApproval.current?.runId === remoteRequest.runId) remoteApproval.current = null
+    if (voiceRequest && activeAmbientRequest.current?.requestId === voiceRequest.requestId) activeAmbientRequest.current = null
     await mobileSink?.flush()
     recordModelRun(runModel, performance.now() - startedAt, assistantTextBuffer, {
       lastFirstTokenMs: firstTokenMs,
@@ -1015,6 +1105,57 @@ export default function App() {
     )
   }
 
+  async function recoverLastRun() {
+    if (!runRecovery || recoveryBusy) return
+    setRecoveryBusy(true)
+    try {
+      let nextSettings = settings
+      if (runRecovery.error.action === 'open_settings') {
+        setSidebarTab('settings')
+        return
+      }
+      if (runRecovery.error.action === 'choose_project') {
+        await chooseProject()
+        return
+      }
+      if (runRecovery.error.action === 'open_lmstudio') {
+        await invoke('open_app', { app: 'lmstudio' }).catch(() => undefined)
+        let ready = false
+        for (let attempt = 0; attempt < 12; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 1000))
+          const discovered = await listLmStudioModelInfos(settings).catch(() => [])
+          if (discovered.length) { ready = true; break }
+        }
+        if (!ready) throw new Error('LM Studio opened, but its local server is not ready yet. Enable the server, then press Fix it again.')
+      }
+      if (runRecovery.error.action === 'load_model' || runRecovery.error.action === 'choose_model' || runRecovery.error.action === 'open_lmstudio') {
+        const models = await listLmStudioModelInfos(settings)
+        const configured = settings.modelAssignments?.daily || settings.fastModel || settings.model
+        const target = models.find((model) => model.id.toLowerCase() === configured.toLowerCase())
+          || models.find((model) => model.loaded)
+          || models[0]
+        if (!target) throw new Error('No local models were found. Download or import a model in LM Studio, then try again.')
+        if (!target.loaded) await loadLmStudioModel(settings, target.id, settings.modelLoadTimeoutMs)
+        if (target.id !== configured) {
+          nextSettings = {
+            ...settings,
+            model: target.id,
+            fastModel: target.id,
+            modelAssignments: { ...settings.modelAssignments, daily: target.id },
+          }
+          setSettings(nextSettings)
+        }
+      }
+      const recovery = runRecovery
+      setRunRecovery(null)
+      await sendMessage(recovery.content, undefined, recovery.attachments, undefined, recovery.sourceMessageId, nextSettings)
+    } catch (error) {
+      setRunRecovery((current) => current ? { ...current, error: userFacingNebulaError(error) } : current)
+    } finally {
+      setRecoveryBusy(false)
+    }
+  }
+
   async function runQueuedTask(id: string) {
     if (queueRunInProgress.current) {
       addLog(createLog('status', 'A queued task is already running.'))
@@ -1045,16 +1186,23 @@ export default function App() {
     }
   }
 
-  async function submitAmbientPrompt(text: string) {
+  async function submitAmbientPrompt(text: string, requestId: string = crypto.randomUUID()) {
     const trimmed = text.trim()
     if (!trimmed) return
+    const voiceRequest: VoiceRequest = { requestId, text: trimmed, source: 'ambient' }
     if (settings.screenshotAskEnabled && latestCapture) {
       await sendMessage(
         `[SCREEN ASK]\nCaptured screenshot: ${latestCapture.path}\nDimensions: ${latestCapture.width}x${latestCapture.height}\nUser question: ${trimmed}\nUse the screenshot path as current screen context. If vision is not available locally, say what extra context you need instead of pretending to see it.`,
+        undefined,
+        [],
+        undefined,
+        undefined,
+        undefined,
+        voiceRequest,
       )
       return
     }
-    await sendMessage(trimmed)
+    await sendMessage(trimmed, undefined, [], undefined, undefined, undefined, voiceRequest)
   }
 
   function handleLauncherAction(action: string) {
@@ -1094,20 +1242,40 @@ export default function App() {
     }, 450)
   }
 
+  ambientSubmitHandler.current = (request) => {
+    if (request?.source === 'ambient' && request.text?.trim()) void submitAmbientPrompt(request.text, request.requestId)
+  }
+
+  ambientCancelHandler.current = (requestId) => {
+    if (activeAmbientRequest.current?.requestId === requestId) void stopAgent()
+  }
+
+  ambientApprovalHandler.current = (decision) => {
+    if (activeAmbientRequest.current?.requestId !== decision.requestId || ambientApprovalId.current !== decision.approvalId) return
+    if (approval?.requiresTypedConfirm && decision.approved && decision.confirmation !== 'CONFIRM') return
+    decideApproval(decision.approved)
+  }
+
   useEffect(() => {
-    let cleanup: (() => void) | undefined
+    if (!isTauriRuntime()) return
+    let disposed = false
+    const cleanups: Array<() => void> = []
 
-    listen<string>('ambient-submit', (event) => {
-      const content = String(event.payload ?? '').trim()
-      if (content) void submitAmbientPrompt(content)
-    })
-      .then((unlisten) => {
-        cleanup = unlisten
-      })
-      .catch((error) => addLog(createLog('error', `Ambient overlay listener failed: ${String(error)}`)))
+    void Promise.all([
+      listen<VoiceRequest>('ambient-submit', (event) => ambientSubmitHandler.current(event.payload)),
+      listen<{ requestId: string }>('ambient-cancel', (event) => ambientCancelHandler.current(event.payload.requestId)),
+      listen<VoiceApprovalDecision>('ambient-approval', (event) => ambientApprovalHandler.current(event.payload)),
+      listen<VoiceRunEvent>('ambient-run-event', (event) => setAmbientRunEvent(event.payload)),
+    ]).then((listeners) => {
+      if (disposed) listeners.forEach((cleanup) => cleanup())
+      else cleanups.push(...listeners)
+    }).catch((error) => addLog(createLog('error', `Ambient overlay listener failed: ${String(error)}`)))
 
-    return () => cleanup?.()
-  }, [settings, messages, latestCapture])
+    return () => {
+      disposed = true
+      cleanups.forEach((cleanup) => cleanup())
+    }
+  }, [])
 
   mobileRunRequestHandler.current = (request) => {
     const conversationId = request.conversationId || crypto.randomUUID()
@@ -1185,10 +1353,11 @@ export default function App() {
         quantization: model.quantization,
       })),
     })
-  }, [agentStatus, lmOnline, memoryReady, mobileModels, settings])
+  }, [agentStatus, lmOnline, memoryReady, mobileModels, runtimeGrantVersion, settings])
 
   async function stopAgent() {
     const mobile = activeMobileRun.current
+    const ambient = activeAmbientRequest.current
     stopped.current = true
     activeRun.current?.cancel('user')
     cancelActiveLmStudioRequests()
@@ -1199,6 +1368,7 @@ export default function App() {
     setAgentStatus('stopped')
     addLog(createLog('status', 'Stop requested. Running command stopped if one existed.'))
     await mobile?.sink.event('cancelled', { message: 'Nebula stopped the active request.' })
+    if (ambient) await emit('ambient-run-event', { requestId: ambient.requestId, type: 'cancelled' } satisfies VoiceRunEvent).catch(() => undefined)
   }
 
   function startNewConversation() {
@@ -1214,6 +1384,11 @@ export default function App() {
       void mobile.sink.event('approval_resolved', { approvalId: remoteApproval.current.approvalId, approved })
       remoteApproval.current = null
     }
+    const ambient = activeAmbientRequest.current
+    if (ambient && ambientApprovalId.current) {
+      void emit('ambient-run-event', { requestId: ambient.requestId, type: 'approval_resolved' } satisfies VoiceRunEvent)
+      ambientApprovalId.current = ''
+    }
     setApproval(null)
     approvalResolver.current?.(approved)
     approvalResolver.current = null
@@ -1221,19 +1396,23 @@ export default function App() {
 
   return (
     <>
-      <div className={`nebula-app flex h-full flex-col text-slate-100 ${sidebarCollapsed ? 'nebula-sidebar-collapsed' : ''}`}>
+      <div data-theme={settings.theme ?? 'black_matter'} className={`nebula-app flex h-full flex-col text-slate-100 ${sidebarCollapsed ? 'nebula-sidebar-collapsed' : ''}`}>
         <TopBar
           projectName={settings.projectFolder.split(/[\\/]/).filter(Boolean).at(-1) ?? ''}
           model={settings.showModelDebugInfo ? modelLabel(settings) : 'Nebula unified'}
           memoryReady={memoryReady}
           agentStatus={agentStatus}
-          actionMode={settings.actionMode ?? 'fast'}
+          actionMode={settings.actionMode ?? 'safe'}
           notificationCount={notificationCount}
           serviceState={serviceState}
+          experienceMode={settings.experienceMode ?? 'simple'}
           onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
           onOpenCommandCenter={() => setCommandCenterOpen(true)}
           onToggleInspector={() => setInspectorOpen((current) => !current)}
           inspectorOpen={inspectorOpen}
+          terminalOpen={terminalOpen}
+          onToggleTerminal={() => setTerminalOpen((current) => !current)}
+          onActionModeChange={(actionMode) => setSettings((current) => ({ ...current, actionMode, requireApproval: actionMode === 'approval' }))}
           onStop={stopAgent}
         />
         <main className="nebula-main-grid codex-focus-grid flex min-h-0 flex-1 gap-2 p-2">
@@ -1293,10 +1472,13 @@ export default function App() {
                 onQuickAction={runQuickAction}
                 settings={settings}
                 onSettingsChange={setSettings}
+                recovery={runRecovery?.error}
+                recoveryBusy={recoveryBusy}
+                onRecovery={() => void recoverLastRun()}
               />
             </section>
           </ErrorBoundary>
-          {inspectorOpen && <ErrorBoundary name="Live context">
+          {inspectorOpen && settings.experienceMode === 'advanced' && <ErrorBoundary name="Live context">
             <WorkspaceRail
               agentStatus={agentStatus}
               serviceState={serviceState}
@@ -1308,14 +1490,24 @@ export default function App() {
             />
           </ErrorBoundary>}
         </main>
+        <TerminalPanel open={terminalOpen} onClose={() => setTerminalOpen(false)} onRerun={(command) => {
+          setTerminalOpen(false)
+          void sendMessage(`Run this command in the active project and report the result: ${command}`)
+        }} />
         <AmbientAssistant
           active={ambientActive}
           settings={settings}
           latestCapture={latestCapture}
           captureError={captureError}
+          runEvent={ambientRunEvent}
           onClose={() => setAmbientActive(false)}
           onCaptureScreen={runScreenCapture}
           onSubmitVoice={submitAmbientPrompt}
+          onCancelRequest={() => void stopAgent()}
+          onApprovalDecision={(decision) => {
+            if (ambientApprovalId.current !== decision.approvalId) return
+            decideApproval(decision.approved)
+          }}
         />
         <ApprovalModal approval={approval} onDecision={decideApproval} />
         <CommandCenter
@@ -1337,6 +1529,7 @@ export default function App() {
           onClose={() => setSetupWizardOpen(false)}
         />
       </div>
+      {!showSplash && settings.setupWizardCompleted && <BlackMatterWhatsNew onThemeChange={(theme) => setSettings((current) => ({ ...current, theme }))} />}
       {showSplash && <SplashScreen mode={settings.startupAnimation ?? 'cinematic'} onComplete={() => setShowSplash(false)} />}
     </>
   )

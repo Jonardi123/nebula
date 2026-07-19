@@ -51,7 +51,10 @@ export function useMessages(projectFolder = '') {
       void conversationRepository.load().then((durable) => {
         if (!disposed && durable) setStore(durable)
       }).catch(() => undefined)
-    }).then((cleanup) => { unlisten = cleanup }).catch(() => undefined)
+    }).then((cleanup) => {
+      if (disposed) cleanup()
+      else unlisten = cleanup
+    }).catch(() => undefined)
     return () => { disposed = true; unlisten?.() }
   }, [])
 

@@ -14,7 +14,12 @@ export function recordVoiceDiagnostic(update: Partial<VoiceDiagnosticSnapshot>) 
     supported: update.supported ?? previous?.supported ?? false,
     permission: update.permission ?? previous?.permission ?? 'unknown',
     language: update.language ?? previous?.language ?? 'en-US',
+    engine: update.engine ?? previous?.engine,
+    localAvailability: update.localAvailability ?? previous?.localAvailability ?? 'unknown',
+    lastErrorCode: update.lastErrorCode,
+    recognitionLatencyMs: update.recognitionLatencyMs ?? previous?.recognitionLatencyMs,
     lastTranscriptAt: update.lastTranscriptAt ?? previous?.lastTranscriptAt,
+    lastTranscriptPreview: update.lastTranscriptPreview ?? previous?.lastTranscriptPreview,
     lastError: update.lastError,
     checkedAt: new Date().toISOString(),
   }

@@ -39,6 +39,7 @@ const MAX_PAIR_ATTEMPTS: usize = 5;
 const MAX_RUN_BYTES: usize = 10 * 1024 * 1024;
 const MAX_ATTACHMENT_BYTES: usize = 5 * 1024 * 1024;
 const MAX_ATTACHMENTS_TOTAL: usize = 8 * 1024 * 1024;
+const RUN_HISTORY_TTL: Duration = Duration::from_secs(10 * 60);
 
 #[derive(RustEmbed)]
 #[folder = "../mobile-dist/"]
@@ -74,6 +75,7 @@ struct MobileRun {
     history: VecDeque<Value>,
     pending_approvals: HashMap<String, bool>,
     terminal: bool,
+    terminal_at: Option<Instant>,
 }
 
 #[derive(Debug)]
@@ -298,7 +300,13 @@ fn validate_mobile_control_change(
                 .is_some_and(|item| matches!(item, "suggest" | "auto" | "manual")),
             "actionMode" => value
                 .as_str()
-                .is_some_and(|item| matches!(item, "fast" | "guarded" | "strict")),
+                .is_some_and(|item| matches!(item, "approval" | "safe" | "full")),
+            "visualTheme" => value
+                .as_str()
+                .is_some_and(|item| matches!(item, "black_matter" | "original")),
+            "fullAccessConfirmation" => value
+                .as_str()
+                .is_some_and(|item| item == "ENABLE FULL ACCESS"),
             _ => {
                 return Err(ApiError::new(
                     StatusCode::BAD_REQUEST,
@@ -535,6 +543,7 @@ fn publish(state: &MobileBridgeState, run_id: &str, mut event: Value) -> Result<
     }
     if terminal {
         run.terminal = true;
+        run.terminal_at = Some(Instant::now());
     }
     let _ = run.sender.send(event);
     Ok(())
@@ -713,7 +722,24 @@ async fn update_mobile_control_settings(
     Json(request): Json<MobileControlPatch>,
 ) -> Result<Json<Value>, ApiError> {
     let client = authorize(&state, &headers)?;
-    let change = validate_mobile_control_change(request.change)?;
+    let mut change = validate_mobile_control_change(request.change)?;
+    let confirmation = change.remove("fullAccessConfirmation");
+    if change.get("actionMode").and_then(Value::as_str) == Some("full")
+        && confirmation.as_ref().and_then(Value::as_str) != Some("ENABLE FULL ACCESS")
+    {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "full_access_confirmation_required",
+            "Type ENABLE FULL ACCESS to enable Full Access for this session.",
+        ));
+    }
+    let event_change = if let Some(confirmation) = confirmation {
+        let mut event = change.clone();
+        event.insert("fullAccessConfirmation".into(), confirmation);
+        event
+    } else {
+        change.clone()
+    };
     let next_revision = {
         let mut revision = state
             .inner
@@ -747,7 +773,7 @@ async fn update_mobile_control_settings(
             json!({
                 "clientId": client.id,
                 "revision": next_revision,
-                "change": change,
+                "change": event_change,
             }),
         )
         .map_err(|_| ApiError::internal())?;
@@ -798,6 +824,7 @@ async fn conversations(
 ) -> Result<Json<Value>, ApiError> {
     authorize(&state, &headers)?;
     let store = storage::storage_load_conversations(state.inner.app.clone())
+        .await
         .map_err(|_| ApiError::internal())?;
     Ok(Json(mobile_safe_store(store.unwrap_or_else(
         || json!({"version":2,"activeId":"","sessions":[],"folders":[]}),
@@ -980,6 +1007,7 @@ async fn conversation_messages(
 ) -> Result<Json<Value>, ApiError> {
     authorize(&state, &headers)?;
     let store = storage::storage_load_conversations(state.inner.app.clone())
+        .await
         .map_err(|_| ApiError::internal())?
         .unwrap_or(Value::Null);
     let session = store
@@ -1020,6 +1048,7 @@ async fn search_conversations(
     }
     let mut results =
         storage::storage_search_conversations(state.inner.app.clone(), q, query.limit)
+            .await
             .map_err(|_| ApiError::internal())?;
     for result in &mut results {
         if let Some(object) = result.as_object_mut() {
@@ -1090,7 +1119,14 @@ async fn start_run(
         ));
     }
     {
-        let runs = state.inner.runs.lock().map_err(|_| ApiError::internal())?;
+        let mut runs = state.inner.runs.lock().map_err(|_| ApiError::internal())?;
+        runs.retain(|_, run| {
+            !run.terminal
+                || run
+                    .terminal_at
+                    .map(|finished| finished.elapsed() < RUN_HISTORY_TTL)
+                    .unwrap_or(false)
+        });
         if runs.values().any(|run| !run.terminal) {
             return Err(ApiError::new(
                 StatusCode::CONFLICT,
@@ -1119,6 +1155,7 @@ async fn start_run(
                 history: VecDeque::new(),
                 pending_approvals: HashMap::new(),
                 terminal: false,
+                terminal_at: None,
             },
         );
     let payload = RemoteRunPayload {
@@ -1650,11 +1687,12 @@ mod tests {
             "temperature":0.25,
             "contextBudgetChars":18000,
             "autoWebSearch":true,
-            "actionMode":"guarded"
+            "actionMode":"safe",
+            "visualTheme":"black_matter"
         }))
         .expect("safe settings should validate");
         assert_eq!(clean.get("modelMode"), Some(&json!("code")));
-        assert_eq!(clean.get("actionMode"), Some(&json!("guarded")));
+        assert_eq!(clean.get("actionMode"), Some(&json!("safe")));
     }
 
     #[test]
@@ -1679,6 +1717,7 @@ mod tests {
         assert!(validate_mobile_control_change(json!({"temperature":4})).is_err());
         assert!(validate_mobile_control_change(json!({"maxTokens":1})).is_err());
         assert!(validate_mobile_control_change(json!({"actionMode":"unrestricted"})).is_err());
+        assert!(validate_mobile_control_change(json!({"fullAccessConfirmation":"yes"})).is_err());
     }
 
     #[tokio::test]

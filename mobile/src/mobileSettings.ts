@@ -6,7 +6,7 @@ export const DEFAULT_BRIDGE_URL = 'https://nebula-private-host.invalid'
 
 export const DEFAULT_MOBILE_PREFERENCES: MobilePreferences = {
   version: 1,
-  theme: 'dark',
+  theme: 'black_matter',
   textScale: 1,
   compactMessages: false,
   showTimestamps: false,
@@ -47,7 +47,9 @@ function bounded(value: unknown, fallback: number, min: number, max: number) {
 export function sanitizeMobilePreferences(value: unknown): MobilePreferences {
   const candidate = value && typeof value === 'object' ? value as Partial<MobilePreferences> : {}
   const boolean = <K extends keyof MobilePreferences>(key: K) => typeof candidate[key] === 'boolean' ? candidate[key] as boolean : DEFAULT_MOBILE_PREFERENCES[key] as boolean
-  const theme = candidate.theme === 'system' || candidate.theme === 'light' || candidate.theme === 'dark' ? candidate.theme : 'dark'
+  const theme = candidate.theme === 'system' || candidate.theme === 'light' || candidate.theme === 'original' || candidate.theme === 'black_matter'
+    ? candidate.theme
+    : 'black_matter'
   const bridgeUrl = typeof candidate.bridgeUrl === 'string' && /^https:\/\//i.test(candidate.bridgeUrl.trim())
     ? candidate.bridgeUrl.trim().replace(/\/$/, '')
     : DEFAULT_BRIDGE_URL

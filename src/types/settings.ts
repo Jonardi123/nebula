@@ -1,17 +1,27 @@
-export type ThemeMode = 'dark' | 'darker'
-export type ActionMode = 'fast' | 'guarded' | 'strict'
+export type VisualTheme = 'black_matter' | 'original'
+export type ThemeMode = VisualTheme
+export type ExecutionMode = 'approval' | 'safe' | 'full'
+export type ActionMode = ExecutionMode
 export type ModelMode = 'auto' | 'fast' | 'code' | 'review'
 export type ModelProvider = 'lmstudio' | '9router' | 'openrouter'
 export type MemoryReviewMode = 'suggest' | 'auto' | 'manual'
 export type ProjectProfileMode = 'auto_editable'
 export type NotificationMode = 'in_app_tray'
-export type StartupAnimationMode = 'cinematic' | 'simple' | 'off'
+export type StartupAnimationMode = 'event_horizon' | 'cinematic' | 'simple' | 'off'
 export type ProfileAvatarMode = 'preset' | 'image'
-export type ProfileAvatarPreset = 'nova' | 'aurora' | 'eclipse' | 'plasma'
+export type ProfileAvatarCategory = 'nebula_originals' | 'black_matter' | 'signals'
+export type ProfileAvatarPreset =
+  | 'nova' | 'aurora' | 'plasma' | 'prism'
+  | 'eclipse' | 'event_horizon' | 'singularity' | 'void'
+  | 'ion' | 'pulsar' | 'quasar' | 'vector'
 export type AutomationConfirmationMode = 'safe_only' | 'confirm_risky' | 'manual_only'
 export type PermissionMode = 'enabled' | 'disabled'
+export type ExperienceMode = 'simple' | 'advanced'
+export type VoiceRecognitionMode = 'local_first' | 'online' | 'text_only'
+export type VoiceSynthesisMode = 'neural_local' | 'supertonic' | 'system'
 
 export interface AppSettings {
+  experienceMode: ExperienceMode
   endpoint: string
   modelProvider: ModelProvider
   nineRouterBaseUrl: string
@@ -51,6 +61,7 @@ export interface AppSettings {
     review: string
   }
   launcherIndexedFolders: string[]
+  trustedAppAliases: Record<string, string>
   maxAutoFetchPages: number
   memoryReviewMode: MemoryReviewMode
   activeProjectProfileId: string
@@ -74,6 +85,17 @@ export interface AppSettings {
   voiceEnabled: boolean
   voiceAutoStart: boolean
   voiceLanguage: string
+  voiceRecognitionMode: VoiceRecognitionMode
+  voiceOnlineConsent: boolean
+  voiceAutoSubmit: boolean
+  voiceSilenceMs: number
+  voiceSpeakReplies: boolean
+  voiceSynthesisMode: VoiceSynthesisMode
+  voiceNeuralVoice: string
+  voiceSupertonicVoice: string
+  voiceSystemVoice: string
+  voiceRate: number
+  voicePitch: number
   wakePhraseEnabled: boolean
   wakePhrase: string
   theme: ThemeMode

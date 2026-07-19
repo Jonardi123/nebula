@@ -1,9 +1,25 @@
 import type { RiskLevel } from '../types/tools'
+import type { ExecutionMode } from '../types/settings'
 
 export interface SafetyResult {
   level: RiskLevel
   reason: string
   requiresTypedConfirm: boolean
+}
+
+const sideEffectfulTools = new Set([
+  'sleep_pc', 'open_app', 'write_file', 'create_file', 'append_file', 'run_command', 'write_memory', 'capture_screen',
+])
+
+export function toolNeedsApproval(mode: ExecutionMode, tool: string, safety: SafetyResult) {
+  if (safety.level === 'blocked') return false
+  if (mode === 'full') return false
+  if (mode === 'approval') return sideEffectfulTools.has(tool)
+  return safety.level !== 'safe'
+}
+
+export function isSideEffectfulTool(tool: string) {
+  return sideEffectfulTools.has(tool)
 }
 
 const safeCommands = [/^\s*dir\b/i, /^\s*echo\b/i, /^\s*npm\s+test\b/i, /^\s*npm\s+run\s+build\b/i, /^\s*git\s+status\b/i]
@@ -46,6 +62,8 @@ const blockedCommands = [
   /\bnet\s+user\b.*\*/i,
   /\bInvoke-WebRequest\b.*\|\s*(iex|Invoke-Expression)/i,
   /\bcurl\b.*\|\s*(sh|powershell|pwsh|cmd)/i,
+  /(?:powershell|pwsh|start-process).*\bwindowstyle\s+hidden\b/i,
+  /\b(wscript|cscript)\.exe\b.*\/b/i,
 ]
 
 export function classifyCommand(command: string): SafetyResult {
@@ -144,9 +162,9 @@ export function classifyTool(tool: string, args: Record<string, unknown>): Safet
 
   if (tool === 'open_app') {
     const appName = String(args.app ?? args.path ?? '').toLowerCase()
-    const known = ['notepad', 'calculator', 'calc', 'cmd', 'powershell', 'explorer']
+    const known = ['notepad', 'calculator', 'calc', 'cmd', 'powershell', 'explorer', 'settings', 'lm studio', 'lmstudio', 'spotify', 'visual studio code', 'vs code', 'vscode', 'edge', 'chrome', 'firefox']
     return known.includes(appName)
-      ? { level: 'needs_approval', reason: 'Opening an app changes desktop state.', requiresTypedConfirm: false }
+      ? { level: 'safe', reason: 'Known installed app launch.', requiresTypedConfirm: false }
       : {
           level: 'high_risk',
           reason: 'Unknown app paths require explicit confirmation.',

@@ -77,7 +77,7 @@ export interface MobileSourceCard {
   dateChecked?: string
 }
 
-export type MobileTheme = 'system' | 'dark' | 'light'
+export type MobileTheme = 'black_matter' | 'original' | 'system' | 'light'
 
 export interface MobilePreferences {
   version: 1
@@ -116,7 +116,7 @@ export interface MobilePreferences {
 
 export type MobileModelMode = 'auto' | 'fast' | 'code' | 'review'
 export type MobileMemoryReviewMode = 'suggest' | 'auto' | 'manual'
-export type MobileActionMode = 'fast' | 'guarded' | 'strict'
+export type MobileActionMode = 'approval' | 'safe' | 'full'
 
 export interface MobileControlSettings {
   revision: number
@@ -139,6 +139,8 @@ export interface MobileControlSettings {
   maxAutoFetchPages: number
   memoryReviewMode: MobileMemoryReviewMode
   actionMode: MobileActionMode
+  visualTheme: 'black_matter' | 'original'
+  fullAccessConfirmation?: string
 }
 
 export interface MobileModelSummary {
