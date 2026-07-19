@@ -104,6 +104,30 @@ export async function resolveRoleModel(settings: AppSettings, role: ModelRole) {
   return resolveLmStudioModel(settings, roleFallbackModel(settings, role))
 }
 
+export function resolveReportedModel<T extends { id: string }>(requestedModel: string, models: T[]) {
+  if (models.length === 0) return requestedModel
+  const requested = normalize(requestedModel)
+  if (!requested) return requestedModel
+
+  const exact = models.find((model) => normalize(model.id) === requested)
+  if (exact) return exact.id
+
+  const contains = models.find((model) => {
+    const candidate = normalize(model.id)
+    return candidate.includes(requested) || requested.includes(candidate)
+  })
+  if (contains) return contains.id
+
+  const parts = requestedModel.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+  const scored = models
+    .map((model) => ({
+      id: model.id,
+      score: parts.filter((part) => model.id.toLowerCase().includes(part)).length,
+    }))
+    .sort((left, right) => right.score - left.score)
+  return scored[0]?.score ? scored[0].id : requestedModel
+}
+
 async function resolveFallbackModel(settings: AppSettings, role: ModelRole, failedModel: string) {
   if (settings.singleModelEnabled) return ''
   const info = await currentLoadedInfo(settings)
@@ -189,8 +213,35 @@ export async function ensureModelReady(
     }
   }
 
-  const resolvedModel = await resolveLmStudioModel(settings, requestedModel)
+  const cachedRequested = getCachedLoaded(requestedModel)
+  if (cachedRequested === true) {
+    emitModelEvent({ state: 'ready', role, model: requestedModel, message: `${role} model ready from warm cache: ${requestedModel}`, background: options.background })
+    return { requestedModel, resolvedModel: requestedModel, role, loaded: true }
+  }
+
+  // Loaded models must never wait behind a background load/unload operation.
+  const preflight = await currentLoadedInfo(settings)
   throwIfRunCancelled(options.signal)
+  const resolvedModel = resolveReportedModel(requestedModel, preflight.models)
+  const reportedModel = preflight.models.find((model) => normalize(model.id) === normalize(resolvedModel))
+  if (reportedModel?.loaded) {
+    cacheLoaded(resolvedModel, true)
+    recordModelLoadMetric(resolvedModel, {
+      role,
+      loadedModelCount: preflight.loadedModelCount,
+      supportsMultipleLoadedModels: preflight.supportsMultipleLoadedModels,
+    })
+    emitModelEvent({ state: 'ready', role, model: resolvedModel, message: `${role} model already loaded: ${resolvedModel}`, background: options.background })
+    return {
+      requestedModel,
+      resolvedModel,
+      role,
+      loaded: true,
+      loadedModelCount: preflight.loadedModelCount,
+      supportsMultipleLoadedModels: preflight.supportsMultipleLoadedModels,
+    }
+  }
+
   const promiseKey = `${role}:${normalize(resolvedModel)}`
   const existing = loadPromises.get(promiseKey)
   if (existing) return existing

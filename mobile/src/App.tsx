@@ -17,6 +17,7 @@ import type {
   MobileCapabilities, MobileIntentMode, MobilePreferences, MobileRunMode,
   MobileSourceCard, RunEvent, RuntimeStatus, SearchResult,
 } from './types'
+import { shouldDisplayMobileMessage } from './messageDisplay'
 import { useMobileViewport } from './useMobileViewport'
 import { DEFAULT_MOBILE_PREFERENCES, loadMobilePreferences, saveMobilePreferences } from './mobileSettings'
 import { impact, notifyHaptic, openPublicSource, showCompletionNotification } from './platform'
@@ -191,7 +192,7 @@ export function App() {
     [activeId, store.sessions],
   )
   const visibleMessages = useMemo(
-    () => (activeConversation?.messages ?? []).filter((item) => item.role !== 'system'),
+    () => (activeConversation?.messages ?? []).filter(shouldDisplayMobileMessage),
     [activeConversation],
   )
   const latestMessageContent = visibleMessages.at(-1)?.content
@@ -1056,7 +1057,7 @@ function Message({ message: item, showTimestamp, onMenu }: { message: MobileMess
     >
       {item.role === 'assistant' && <img src="/nebula-icon.png" alt="" />}
       <div>
-        <p>{item.content || '...'}</p>
+        <p>{item.content}</p>
         {item.attachments && item.attachments.length > 0 && <div className="message-attachments">{item.attachments.map((attachment) => <StoredAttachment key={attachment.id} attachment={attachment} />)}</div>}
         {showTimestamp && timeLabel && <time>{timeLabel}</time>}
       </div>
