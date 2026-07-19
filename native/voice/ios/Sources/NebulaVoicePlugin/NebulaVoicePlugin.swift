@@ -61,7 +61,7 @@ public class NebulaVoicePlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizer
         ])
     }
 
-    @objc public func requestPermissions(_ call: CAPPluginCall) {
+    @objc public override func requestPermissions(_ call: CAPPluginCall) {
         SFSpeechRecognizer.requestAuthorization { speechStatus in
             AVAudioSession.sharedInstance().requestRecordPermission { microphoneGranted in
                 DispatchQueue.main.async {
