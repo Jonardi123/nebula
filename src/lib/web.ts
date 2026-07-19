@@ -63,18 +63,7 @@ export async function webSearch(query: string, maxResults = 5): Promise<WebSearc
   const duckDuckGoResults = await duckDuckGoSearch(trimmed, maxResults).catch(() => [])
   if (duckDuckGoResults.length > 0) return duckDuckGoResults
 
-  // Provider interface placeholder: SerpAPI/Tavily/Brave can be wired here once API keys exist.
-  const checkedAt = new Date().toISOString()
-  const searchUrl = `https://duckduckgo.com/?q=${encodeURIComponent(trimmed)}`
-  return [
-    {
-      title: `Manual web search: ${trimmed}`,
-      url: searchUrl,
-      snippet:
-        'No web search API key is configured. Open this search URL manually or configure a SerpAPI, Tavily, or Brave provider.',
-      date: checkedAt,
-    },
-  ].slice(0, Math.max(1, Math.min(maxResults, 10)))
+  throw new Error('Live web search returned no verified results. Nebula will not invent search results.')
 }
 
 async function bingSearch(query: string, maxResults: number): Promise<WebSearchResult[]> {

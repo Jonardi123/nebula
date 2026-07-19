@@ -79,7 +79,7 @@ export function AgentsPanel({ skillsVersion, onSkillsChange }: Props) {
       icon: <Globe2 size={15} />,
       tools: [webSearch?.enabled ? 'web_search' : '', webCall?.enabled ? 'web_fetch' : ''].filter(Boolean),
       note: webEnabled
-        ? 'Search uses a provider interface with mock/manual fallback until a search API key is configured.'
+        ? 'Search uses live public result pages and reports honestly when no verified results are available.'
         : 'This agent blocks private/local URLs and downloadable files by default.',
       action: webEnabled ? undefined : { label: 'Enable Web Agent', onClick: activateWebAgent },
     },

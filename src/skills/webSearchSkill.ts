@@ -3,7 +3,7 @@ import type { SkillDefinition } from './types'
 export const webSearchSkill: SkillDefinition = {
   id: 'web-search',
   name: 'Web Search',
-  description: 'Searches the web through a provider interface. Uses manual/mock results until an API provider is configured.',
+  description: 'Searches live Bing and DuckDuckGo result pages and returns verified result metadata. Fails honestly when live search is unavailable.',
   enabled: true,
   requiredPermissions: ['network:web-search'],
   riskLevel: 'needs_approval',
@@ -44,7 +44,7 @@ export const webSearchSkill: SkillDefinition = {
     },
   ],
   systemPromptAdditions: [
-    'Use web_search only when current or external information is needed. Mention source URLs and date checked for verified findings.',
+    'Use web_search only when current or external information is needed. Cite only URLs returned by the tool and never invent search results.',
   ],
   examples: ['Search current LM Studio API docs.', 'Find latest package setup instructions when local knowledge is stale.'],
 }

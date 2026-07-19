@@ -98,6 +98,9 @@ Web Rules:
 * Search the web automatically when the user's question asks for current, external, unfamiliar, or fast-changing information.
 * Search memory first; if memory has no useful answer and web tools are available, use web_search.
 * Verify important claims when possible.
+* Treat only actual web_search or web_fetch results as web evidence.
+* Never invent search results, URLs, titles, snippets, dates, scores, or schedules.
+* Never print simulated tool syntax such as [web_search query="..."] as if a search ran.
 * Record sources for information saved to memory.
 * Mark outdated information as needing verification.
 
@@ -219,6 +222,7 @@ function shouldAutoSearchWeb(userText: string, memoriesFound: boolean) {
     /\b(latest|current|today|right now|nowadays|recent|newest|news|update|changed|still|available|release|version)\b/i,
     /\b(search|look up|google|web|internet|online|source|docs?|documentation)\b/i,
     /\b(price|cost|download|install|requirements|compatibility|benchmark|best model|which model)\b/i,
+    /\b(when (?:is|are|will|does|do)|schedule|fixture|kickoff|match|game|score|standings|tournament|world cup|weather|forecast)\b/i,
     /\b(error|failed|not working|unknown|why|how do i|can you find|what is the best)\b/i,
     /\b202[5-9]\b/i,
   ].some((pattern) => pattern.test(text))
@@ -273,7 +277,8 @@ function isLightweightChat(userText: string) {
 
 function formatWebContext(results: WebSearchResult[]) {
   if (results.length === 0) return ''
-  return `Automatic web search results checked ${new Date().toISOString()}:\n${results
+  return `VERIFIED LIVE WEB RESULTS checked ${new Date().toISOString()}.
+Use only the URLs and claims below as web evidence. Do not invent, alter, or supplement URLs, titles, dates, scores, or schedules. If these results do not answer the question, say that the live search was inconclusive. Do not emit tool syntax such as [web_search ...].\n${results
     .map((result, index) => `${index + 1}. ${result.title}\n   URL: ${result.url}\n   Snippet: ${result.snippet}${result.date ? `\n   Date: ${result.date}` : ''}`)
     .join('\n')}`
 }
@@ -427,7 +432,9 @@ export async function runAgentLoop(
     (settings.autoWebSearch ?? true) &&
     shouldAutoSearchWeb(userMessage.content, contextBundle.summary.memoryHits > 0)
   )
+  let webSearchAttempted = false
   if (enabledToolNames.has('web_search') && shouldSearchWeb) {
+    webSearchAttempted = true
     const searchQuery = explicitResearch ? normalizeExplicitSearchQuery(explicitResearch.query) : userMessage.content
     const maxResults = explicitResearch?.mode === 'deep' ? 7 : 4
     const toolRequest: ToolRequest = { tool: 'web_search', args: { query: searchQuery, maxResults } }
@@ -473,6 +480,9 @@ export async function runAgentLoop(
         .join('\n\n')
       if (fetchedContext) automaticWebContext = `${automaticWebContext}\n\n${fetchedContext}`
     }
+  }
+  if (webSearchAttempted && !automaticWebContext) {
+    automaticWebContext = 'LIVE WEB SEARCH FAILED OR RETURNED NO VERIFIED RESULTS. Say clearly that live search was unavailable or inconclusive. Do not claim a search succeeded, do not provide guessed current facts, and do not invent sources or tool output.'
   }
   const skillPromptAdditions = getEnabledSystemPromptAdditions()
   const selectedSkillPrompt = orchestration.skillMatches.length

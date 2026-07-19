@@ -31,4 +31,15 @@ describe('webSearch', () => {
       snippet: 'Verified documentation result.',
     })
   })
+
+  it('fails honestly instead of returning fabricated fallback results', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html><body>No result cards</body></html>', {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    })))
+
+    await expect(webSearch('unknown current event', 5)).rejects.toThrow(
+      'Live web search returned no verified results',
+    )
+  })
 })
