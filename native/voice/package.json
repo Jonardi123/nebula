@@ -1,0 +1,17 @@
+{
+  "name": "@nebula/native-voice",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Nebula native iOS speech recognition and synthesis bridge",
+  "files": ["ios/Sources", "Package.swift"],
+  "keywords": ["capacitor", "ios", "speech"],
+  "license": "UNLICENSED",
+  "peerDependencies": {
+    "@capacitor/core": ">=8.0.0"
+  },
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    }
+  }
+}

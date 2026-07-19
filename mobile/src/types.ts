@@ -100,6 +100,10 @@ export interface MobilePreferences {
   completionSound: boolean
   cacheHistory: boolean
   voiceLanguage: string
+  voiceAutoSubmit: boolean
+  voiceSilenceMs: number
+  voiceSpeakVoiceReplies: boolean
+  voiceOnlineConsent: boolean
   speechRate: number
   speechPitch: number
   autoReconnect: boolean
@@ -176,6 +180,7 @@ export type RunEvent = {
   content?: string
   status?: string
   message?: string
+  code?: string
   request?: ApprovalEvent['toolRequest']
   result?: unknown
   approval?: ApprovalEvent

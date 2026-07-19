@@ -4,6 +4,7 @@ import type { ConversationStore, MobileControlSettings, MobileConversation, Mobi
 
 const TOKEN_KEY = 'device-token'
 const CACHE_KEY = 'conversation-cache'
+const REQUEST_TIMEOUT_MS = 20_000
 let bridgeBaseUrl = ''
 let conversationCacheEnabled = true
 
@@ -31,15 +32,28 @@ async function token() {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const auth = await token()
-  const response = await fetch(apiUrl(path, bridgeBaseUrl), {
-    ...init,
-    cache: 'no-store',
-    headers: {
-      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-      ...(auth ? { Authorization: `Bearer ${auth}` } : {}),
-      ...init.headers,
-    },
-  })
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort('timeout'), REQUEST_TIMEOUT_MS)
+  let response: Response
+  try {
+    response = await fetch(apiUrl(path, bridgeBaseUrl), {
+      ...init,
+      signal: controller.signal,
+      cache: 'no-store',
+      headers: {
+        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(auth ? { Authorization: `Bearer ${auth}` } : {}),
+        ...init.headers,
+      },
+    })
+  } catch {
+    if (controller.signal.aborted) {
+      throw new MobileApiError(408, 'bridge_timeout', 'Nebula on your PC did not respond in time.')
+    }
+    throw new MobileApiError(0, 'bridge_offline', 'Nebula could not reach your PC. Check Tailscale and make sure Nebula is running.')
+  } finally {
+    window.clearTimeout(timeout)
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null
     throw new MobileApiError(response.status, body?.error?.code ?? 'request_failed', body?.error?.message ?? `Nebula request failed (${response.status}).`)
@@ -147,13 +161,28 @@ export async function getAttachmentBlob(id: string) {
 
 export async function streamRun(runId: string, onEvent: (event: RunEvent) => void, signal: AbortSignal) {
   const auth = await token()
-  const response = await fetch(apiUrl(`/api/v1/runs/${encodeURIComponent(runId)}/events`, bridgeBaseUrl), {
-    headers: auth ? { Authorization: `Bearer ${auth}` } : {}, signal, cache: 'no-store',
-  })
+  let response: Response
+  try {
+    response = await fetch(apiUrl(`/api/v1/runs/${encodeURIComponent(runId)}/events`, bridgeBaseUrl), {
+      headers: auth ? { Authorization: `Bearer ${auth}` } : {}, signal, cache: 'no-store',
+    })
+  } catch {
+    if (signal.aborted) throw new DOMException('The response stream was cancelled.', 'AbortError')
+    throw new MobileApiError(0, 'bridge_offline', 'Nebula could not reach your PC. Check Tailscale and make sure Nebula is running.')
+  }
   if (!response.ok || !response.body) throw new MobileApiError(response.status, 'stream_failed', 'Nebula could not open the response stream.')
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  let terminal = false
+  const consume = (data: string) => {
+    if (!data) return
+    try {
+      const event = JSON.parse(data) as RunEvent
+      terminal ||= event.type === 'completed' || event.type === 'cancelled' || event.type === 'error'
+      onEvent(event)
+    } catch { /* Ignore malformed transport frames. */ }
+  }
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
@@ -163,11 +192,14 @@ export async function streamRun(runId: string, onEvent: (event: RunEvent) => voi
       const block = buffer.slice(0, boundary)
       buffer = buffer.slice(boundary + 2)
       const data = block.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trimStart()).join('\n')
-      if (data) {
-        try { onEvent(JSON.parse(data) as RunEvent) } catch { /* Ignore malformed transport frames. */ }
-      }
+      consume(data)
       boundary = buffer.indexOf('\n\n')
     }
+  }
+  const trailing = buffer.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trimStart()).join('\n')
+  consume(trailing)
+  if (!terminal && !signal.aborted) {
+    throw new MobileApiError(0, 'stream_interrupted', 'The connection to your PC was interrupted before Nebula finished.')
   }
 }
 

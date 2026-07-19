@@ -6,7 +6,9 @@ const config: CapacitorConfig = {
   appName: 'Nebula',
   webDir: 'mobile-dist',
   ios: {
-    contentInset: 'automatic',
+    // Nebula owns its safe-area padding. Letting WKWebView add another inset
+    // leaves a visible strip below the native app and breaks keyboard sizing.
+    contentInset: 'never',
     preferredContentMode: 'mobile',
     scheme: 'Nebula',
   },

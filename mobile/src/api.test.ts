@@ -11,7 +11,7 @@ vi.mock('./platform', () => ({
 }))
 vi.mock('./idb', () => ({ readPrivateValue: vi.fn(), writePrivateValue: vi.fn() }))
 
-import { startRun } from './api'
+import { getStatus, MobileApiError, startRun, streamRun } from './api'
 
 describe('mobile run API', () => {
   beforeEach(() => {
@@ -38,5 +38,23 @@ describe('mobile run API', () => {
     await startRun('chat-1', 'Hello', [])
     const [, request] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(JSON.parse(String(request.body))).toMatchObject({ intentMode: 'auto', includeProjectContext: false })
+  })
+
+  it('reports an interrupted response stream instead of pretending it completed', async () => {
+    const reader = {
+      read: vi.fn()
+        .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode('data: {"type":"token","runId":"run-1","token":"Hi"}\n\n') })
+        .mockResolvedValueOnce({ done: true, value: undefined }),
+    }
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, body: { getReader: () => reader } } as unknown as Response)
+    const events: string[] = []
+    await expect(streamRun('run-1', (event) => events.push(event.type), new AbortController().signal))
+      .rejects.toMatchObject({ code: 'stream_interrupted' })
+    expect(events).toEqual(['token'])
+  })
+
+  it('normalizes bridge connection failures', async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    await expect(getStatus()).rejects.toEqual(expect.objectContaining<Partial<MobileApiError>>({ code: 'bridge_offline', status: 0 }))
   })
 })

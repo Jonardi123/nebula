@@ -130,7 +130,11 @@ export function MobileSettingsScreen({ preferences, online, runtime, onChange, o
       {active === 'voice' && <>
         <Group title="Voice input">
           <Choice label="Language" value={preferences.voiceLanguage} options={[["en-US","English (US)"],["en-GB","English (UK)"],["sq-AL","Albanian"],["de-DE","German"],["fr-FR","French"],["it-IT","Italian"],["es-ES","Spanish"]]} onChange={(voiceLanguage) => onChange({ voiceLanguage })} />
+          <Toggle label="Auto-submit after speech" detail="Send after a short quiet pause" checked={preferences.voiceAutoSubmit} onChange={(voiceAutoSubmit) => onChange({ voiceAutoSubmit })} />
+          <Toggle label="Speak voice replies" detail="Replies to spoken prompts play aloud" checked={preferences.voiceSpeakVoiceReplies} onChange={(voiceSpeakVoiceReplies) => onChange({ voiceSpeakVoiceReplies })} />
+          <Toggle label="Allow online recognition" detail="Used only when on-device recognition is unavailable" checked={preferences.voiceOnlineConsent} onChange={(voiceOnlineConsent) => onChange({ voiceOnlineConsent })} />
           <Toggle label="Read replies aloud" checked={preferences.readAloud} onChange={(readAloud) => onChange({ readAloud })} />
+          <Range label="Silence before send" value={preferences.voiceSilenceMs} min={500} max={3000} step={100} display={`${(preferences.voiceSilenceMs / 1000).toFixed(1)}s`} onChange={(voiceSilenceMs) => onChange({ voiceSilenceMs })} />
           <Range label="Speaking rate" value={preferences.speechRate} min={0.6} max={1.6} step={0.1} display={`${preferences.speechRate.toFixed(1)}x`} onChange={(speechRate) => onChange({ speechRate })} />
           <Range label="Voice pitch" value={preferences.speechPitch} min={0.6} max={1.4} step={0.1} display={preferences.speechPitch.toFixed(1)} onChange={(speechPitch) => onChange({ speechPitch })} />
         </Group>

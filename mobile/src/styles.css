@@ -19,6 +19,7 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body, #root { position: fixed; inset: 0; width: 100%; height: 100%; margin: 0; overflow: hidden; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body { background: #050506; overscroll-behavior: none; touch-action: manipulation; }
 button, input, textarea { font: inherit; }
 button { color: inherit; }
@@ -182,7 +183,7 @@ button { color: inherit; }
 .full-overlay { padding-top: var(--safe-top); background: rgba(8,9,14,.88); }
 .search-header { margin: 8px 10px 0; height: 58px; border-radius: 20px; display: flex; align-items: center; gap: 5px; padding: 6px; }
 .search-header > div { flex: 1; height: 42px; display: flex; align-items: center; gap: 8px; border-radius: 14px; padding: 0 12px; background: rgba(255,255,255,.045); color: var(--muted); }
-.search-header input { width: 100%; border: 0; outline: 0; background: transparent; color: white; font-size: 15px; }
+.search-header input { width: 100%; border: 0; outline: 0; background: transparent; color: white; font-size: 16px; }
 .search-results { padding: 15px; }
 .search-results button { width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; border: 0; border-bottom: 1px solid rgba(255,255,255,.06); background: transparent; padding: 14px 4px; text-align: left; }
 .search-results strong { font-size: 13px; }.search-results span { grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }.search-results time { color: rgba(225,229,240,.3); font-size: 9px; }.search-results > p { text-align: center; color: var(--muted); font-size: 12px; }
@@ -410,7 +411,7 @@ body { font-size: calc(16px * var(--mobile-text-scale)); }
 .settings-profile strong { font-size: 19px; }
 .settings-profile span { color: var(--secondary); font-size: 12px; }
 .settings-search { height: 42px; display: flex; align-items: center; gap: 9px; margin-bottom: 18px; border-radius: 12px; padding: 0 12px; color: var(--secondary); background: var(--surface-raised); }
-.settings-search input { flex: 1; min-width: 0; border: 0; outline: 0; color: var(--text); background: transparent; font-size: 15px; }
+.settings-search input { flex: 1; min-width: 0; border: 0; outline: 0; color: var(--text); background: transparent; font-size: 16px; }
 .settings-section-list { overflow: hidden; border-radius: 13px; background: var(--surface); }
 .settings-section-list > button { width: 100%; min-height: 64px; display: grid; grid-template-columns: 34px 1fr 18px; align-items: center; gap: 10px; border: 0; border-bottom: 1px solid var(--hairline); padding: 8px 13px; color: var(--text); background: transparent; text-align: left; }
 .settings-section-list > button:last-child { border-bottom: 0; }
@@ -496,10 +497,26 @@ body { font-size: calc(16px * var(--mobile-text-scale)); }
 }
 
 * { letter-spacing: 0 !important; }
-:root.native-mobile { --app-height: 100%; --app-top: 0px; }
+:root.native-mobile {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  overflow: hidden;
+  --app-height: 100%;
+  --app-top: 0px;
+}
 :root.native-mobile.keyboard-open { --safe-bottom: 0px; }
-.native-mobile body, .native-mobile #root { height: 100%; }
-.native-mobile .mobile-stage { position: absolute; inset: 0; height: 100%; top: 0; }
+.native-mobile body, .native-mobile #root { position: fixed; inset: 0; width: 100%; height: 100%; min-height: 100%; overflow: hidden; }
+.native-mobile .mobile-stage { position: fixed; inset: 0; width: 100%; height: 100%; min-height: 0; top: 0; }
+
+/* iOS zooms the whole WebView when a focused text control computes below 16px. */
+.native-mobile .search-header input,
+.native-mobile .settings-search input,
+.native-mobile .setting-field input,
+.native-mobile .setting-field select,
+.native-mobile .approval-sheet > input { font-size: 16px; }
 :root.pwa-standalone, .pwa-standalone body, .pwa-standalone #root {
   width: 100vw;
   max-width: none;

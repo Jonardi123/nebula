@@ -64,6 +64,26 @@ try {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)
   if (overflow) throw new Error('Mobile layout has horizontal overflow')
 
+  await page.getByRole('button', { name: 'Search conversations' }).click()
+  const chatSearchSize = await page.locator('.search-header input').evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize))
+  if (chatSearchSize < 16) throw new Error(`Chat search can trigger iOS focus zoom: ${chatSearchSize}px`)
+  await page.locator('.search-header > button').click()
+
+  const nativeStage = await page.evaluate(() => {
+    const root = document.documentElement
+    root.classList.remove('web-mobile', 'pwa-standalone')
+    root.classList.add('native-mobile')
+    const bounds = document.querySelector('.mobile-stage').getBoundingClientRect()
+    return { width: bounds.width, height: bounds.height, top: bounds.top, bottom: bounds.bottom }
+  })
+  if (Math.round(nativeStage.width) !== 390 || Math.round(nativeStage.height) !== 844 || Math.round(nativeStage.top) !== 0 || Math.round(nativeStage.bottom) !== 844) {
+    throw new Error(`Native mobile stage is not edge-to-edge: ${JSON.stringify(nativeStage)}`)
+  }
+  await page.evaluate(() => {
+    document.documentElement.classList.remove('native-mobile')
+    document.documentElement.classList.add('web-mobile', 'pwa-standalone')
+  })
+
   await mkdir('build', { recursive: true })
   await page.screenshot({ path: 'build/mobile-chat-smoke.png', fullPage: true })
   await page.getByRole('button', { name: 'Add tools and context' }).click()
@@ -78,6 +98,8 @@ try {
   await page.getByRole('button', { name: 'Open conversations' }).click()
   await page.getByRole('button', { name: 'Settings' }).click()
   await page.getByText('Appearance', { exact: true }).waitFor()
+  const settingsSearchSize = await page.locator('.settings-search input').evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize))
+  if (settingsSearchSize < 16) throw new Error(`Settings search can trigger iOS focus zoom: ${settingsSearchSize}px`)
   await page.waitForTimeout(300)
   await page.screenshot({ path: 'build/mobile-settings-smoke.png', fullPage: true })
   console.log(`Mobile visual smoke passed. Composer y=${Math.round(box.y)}, height=${Math.round(box.height)}.`)

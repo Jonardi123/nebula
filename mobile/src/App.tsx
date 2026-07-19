@@ -21,19 +21,7 @@ import { useMobileViewport } from './useMobileViewport'
 import { DEFAULT_MOBILE_PREFERENCES, loadMobilePreferences, saveMobilePreferences } from './mobileSettings'
 import { impact, notifyHaptic, openPublicSource, showCompletionNotification } from './platform'
 import { MobileSettingsScreen } from './MobileSettingsScreen'
-
-type SpeechRecognitionLike = {
-  lang: string
-  interimResults: boolean
-  continuous: boolean
-  start(): void
-  stop(): void
-  onresult: ((event: { results: ArrayLike<{ 0: { transcript: string }; isFinal: boolean }> }) => void) | null
-  onerror: ((event: { error: string }) => void) | null
-  onend: (() => void) | null
-}
-
-type SpeechRecognitionConstructor = new () => SpeechRecognitionLike
+import { MobileVoiceController, type MobileVoiceFailure, type MobileVoicePhase } from './voice'
 
 const EMPTY_STORE: ConversationStore = { version: 2, activeId: '', sessions: [], folders: [] }
 const FALLBACK_CAPABILITIES: MobileCapabilities = {
@@ -56,11 +44,6 @@ const INTENT_LABELS: Record<MobileIntentMode, string> = {
   personal_intelligence: 'Personal Intelligence',
 }
 
-function speechRecognition() {
-  const target = window as Window & { SpeechRecognition?: SpeechRecognitionConstructor; webkitSpeechRecognition?: SpeechRecognitionConstructor }
-  return target.SpeechRecognition || target.webkitSpeechRecognition
-}
-
 function now() { return new Date().toISOString() }
 
 function message(role: MobileMessage['role'], content: string, id: string = crypto.randomUUID()): MobileMessage {
@@ -81,7 +64,26 @@ function relativeTime(value: string) {
 
 function assistantStatus(value?: string) {
   if (!value || value === 'idle') return 'Ready'
+  if (value === 'loading_model' || value === 'switching_model') return 'Preparing'
+  if (value === 'thinking') return 'Reading context'
+  if (value === 'running_tool' || value === 'waiting_approval') return 'Using a tool'
+  if (value === 'reviewing') return 'Checking the answer'
+  if (value === 'stopped') return 'Stopped'
+  if (value === 'error') return 'Needs attention'
   return value.replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase())
+}
+
+function mobileErrorMessage(code?: string, message?: string) {
+  if (code === 'bridge_offline') return 'Your phone cannot reach Nebula on the PC. Check Tailscale and make sure Nebula is open.'
+  if (code === 'bridge_timeout') return 'Nebula on your PC did not respond in time. Check the PC connection and try again.'
+  if (code === 'offline') return 'Your local AI is offline. Open LM Studio on your PC and make sure its server is enabled.'
+  if (code === 'unloaded_model') return 'Your selected local model is not loaded yet. Open Nebula on your PC and press Fix it.'
+  if (code === 'missing_model') return 'Nebula could not find an available local model. Choose one on your PC, then try again.'
+  if (code === 'timeout') return 'The local model took too long to answer. You can safely try again.'
+  if (code === 'stream_interrupted') return 'The connection to your PC dropped before Nebula finished. Reconnect to see whether the run completed there.'
+  if (code === 'agent_busy') return 'Nebula is already working on another request. Stop or finish that run first.'
+  if (code === 'permission_denied') return 'Nebula needs permission on your PC before it can complete that action.'
+  return message || 'Nebula could not finish that request.'
 }
 
 function isStandalone() {
@@ -113,6 +115,8 @@ export function App() {
   const [pairing, setPairing] = useState(false)
   const [error, setError] = useState('')
   const [listening, setListening] = useState(false)
+  const [voicePhase, setVoicePhase] = useState<MobileVoicePhase>('idle')
+  const [voiceFailure, setVoiceFailure] = useState<MobileVoiceFailure | null>(null)
   const [preferences, setPreferences] = useState<MobilePreferences>(DEFAULT_MOBILE_PREFERENCES)
   const [preferencesReady, setPreferencesReady] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -130,8 +134,15 @@ export function App() {
   const [includeProjectContext, setIncludeProjectContext] = useState(false)
   const [sourceCards, setSourceCards] = useState<Record<string, MobileSourceCard[]>>({})
   const streamAbort = useRef<AbortController | null>(null)
-  const recognition = useRef<SpeechRecognitionLike | null>(null)
+  const voiceController = useRef<MobileVoiceController | null>(null)
+  const voiceFinalText = useRef('')
+  const voiceSubmitTimer = useRef<number | null>(null)
+  const voiceCaptureActive = useRef(false)
   const assistantBuffer = useRef('')
+  const pendingTokenBuffer = useRef('')
+  const pendingTokenMessageId = useRef('')
+  const pendingTokenConversationId = useRef('')
+  const tokenFlushTimer = useRef<number | null>(null)
   const messageList = useRef<HTMLDivElement | null>(null)
   const fileInput = useRef<HTMLInputElement | null>(null)
   const textarea = useRef<HTMLTextAreaElement | null>(null)
@@ -194,6 +205,38 @@ export function App() {
     }))
   }, [])
 
+  const flushStreamingTokens = useCallback(() => {
+    if (tokenFlushTimer.current !== null) window.clearTimeout(tokenFlushTimer.current)
+    tokenFlushTimer.current = null
+    const content = pendingTokenBuffer.current
+    const messageId = pendingTokenMessageId.current
+    const conversationId = pendingTokenConversationId.current
+    pendingTokenBuffer.current = ''
+    pendingTokenMessageId.current = ''
+    pendingTokenConversationId.current = ''
+    if (!content || !messageId || !conversationId) return
+    replaceConversation(conversationId, (conversation) => {
+      const exists = conversation.messages.some((item) => item.id === messageId)
+      return {
+        ...conversation,
+        updatedAt: now(),
+        messages: exists
+          ? conversation.messages.map((item) => item.id === messageId ? { ...item, content: item.content + content } : item)
+          : [...conversation.messages, message('assistant', content, messageId)],
+      }
+    })
+  }, [replaceConversation])
+
+  const queueStreamingToken = useCallback((conversationId: string, messageId: string, token: string) => {
+    if (pendingTokenMessageId.current && (pendingTokenMessageId.current !== messageId || pendingTokenConversationId.current !== conversationId)) {
+      flushStreamingTokens()
+    }
+    pendingTokenConversationId.current = conversationId
+    pendingTokenMessageId.current = messageId
+    pendingTokenBuffer.current += token
+    if (tokenFlushTimer.current === null) tokenFlushTimer.current = window.setTimeout(flushStreamingTokens, 40)
+  }, [flushStreamingTokens])
+
   const refresh = useCallback(async () => {
     try {
       const [status, conversations] = await Promise.all([getStatus(), getConversations()])
@@ -218,14 +261,30 @@ export function App() {
     }
   }, [])
 
+  const refreshStatus = useCallback(async () => {
+    try {
+      const status = await getStatus()
+      setRuntime(status.runtime ?? {})
+      setOnline(true)
+      return true
+    } catch (cause) {
+      setOnline(false)
+      if (cause instanceof MobileApiError && cause.status === 401) {
+        await unpairDevice()
+        setPhase('pair')
+      }
+      return false
+    }
+  }, [])
+
   useEffect(() => {
     if (!preferencesReady) return
     let cancelled = false
     void (async () => {
       const paired = await hasDeviceToken()
       if (!paired) { if (!cancelled) setPhase('pair'); return }
-      const ok = await refresh()
-      if (!cancelled) setPhase(ok || await getCachedConversations() ? 'ready' : 'pair')
+      await refresh()
+      if (!cancelled) setPhase('ready')
     })()
     return () => { cancelled = true }
   }, [preferencesReady, refresh])
@@ -242,11 +301,17 @@ export function App() {
     const tick = async () => {
       if (disposed) return
       if (document.visibilityState !== 'visible' || runId) { schedule(5_000); return }
-      const ok = await refresh()
+      const wasOnline = online
+      const ok = await refreshStatus()
+      if (ok && !wasOnline) await refresh()
       delay = ok ? 15_000 : Math.min(delay * 2, 30_000)
       schedule(delay)
     }
-    const wake = () => { delay = 3_000; schedule(80) }
+    const wake = () => {
+      delay = 3_000
+      if (!runId) void refresh()
+      schedule(3_000)
+    }
     const sleep = () => window.clearTimeout(timer)
     const visibilityChanged = () => document.visibilityState === 'visible' ? wake() : sleep()
     window.addEventListener('online', wake)
@@ -258,7 +323,7 @@ export function App() {
       window.removeEventListener('online', wake)
       document.removeEventListener('visibilitychange', visibilityChanged)
     }
-  }, [online, phase, preferences.autoReconnect, refresh, runId])
+  }, [online, phase, preferences.autoReconnect, refresh, refreshStatus, runId])
 
   useEffect(() => {
     const container = messageList.current
@@ -310,7 +375,9 @@ export function App() {
 
   useEffect(() => () => {
     streamAbort.current?.abort()
-    recognition.current?.stop()
+    void voiceController.current?.dispose()
+    if (voiceSubmitTimer.current !== null) window.clearTimeout(voiceSubmitTimer.current)
+    if (tokenFlushTimer.current !== null) window.clearTimeout(tokenFlushTimer.current)
   }, [])
 
   useEffect(() => {
@@ -373,6 +440,7 @@ export function App() {
   }
 
   function applyRunEvent(event: RunEvent, conversationId: string) {
+    if (event.type !== 'token') flushStreamingTokens()
     if (event.type === 'accepted') {
       setRunStatus('Thinking')
       return
@@ -386,15 +454,7 @@ export function App() {
       const token = event.token ?? ''
       assistantBuffer.current += token
       if (!preferences.streamResponses) return
-      replaceConversation(conversationId, (conversation) => {
-        const exists = conversation.messages.some((item) => item.id === id)
-        return {
-          ...conversation, updatedAt: now(),
-          messages: exists
-            ? conversation.messages.map((item) => item.id === id ? { ...item, content: item.content + token } : item)
-            : [...conversation.messages, message('assistant', token, id)],
-        }
-      })
+      queueStreamingToken(conversationId, id, token)
       return
     }
     if (event.type === 'message' && event.content) {
@@ -419,7 +479,7 @@ export function App() {
       return
     }
     if (event.type === 'approval_resolved') { setApproval(null); setConfirmation(''); return }
-    if (event.type === 'error') setError(event.message || 'Nebula could not finish that request.')
+    if (event.type === 'error') setError(mobileErrorMessage((event as RunEvent & { code?: string }).code, event.message))
     if (event.type === 'cancelled') setRunStatus('Stopped')
   }
 
@@ -431,9 +491,13 @@ export function App() {
     sourceMessageId?: string,
     requestedIntent: MobileIntentMode = 'auto',
     requestedProjectContext = false,
+    voiceOrigin = false,
   ) {
     setRunStatus('Connecting')
     assistantBuffer.current = ''
+    pendingTokenBuffer.current = ''
+    pendingTokenMessageId.current = ''
+    pendingTokenConversationId.current = ''
     nearBottom.current = true
     setShowScrollLatest(false)
     try {
@@ -443,13 +507,15 @@ export function App() {
       const abort = new AbortController()
       streamAbort.current = abort
       await streamRun(run.runId, (event) => applyRunEvent(event, conversationId), abort.signal)
-      if (preferences.readAloud && assistantBuffer.current.trim() && 'speechSynthesis' in window) {
-        speechSynthesis.cancel()
-        const utterance = new SpeechSynthesisUtterance(assistantBuffer.current.slice(0, 4000))
-        utterance.lang = preferences.voiceLanguage
-        utterance.rate = preferences.speechRate
-        utterance.pitch = preferences.speechPitch
-        speechSynthesis.speak(utterance)
+      if ((preferences.readAloud || (voiceOrigin && preferences.voiceSpeakVoiceReplies)) && assistantBuffer.current.trim()) {
+        const controller = voiceController.current ?? new MobileVoiceController({ onPhase: setVoicePhase })
+        voiceController.current = controller
+        await controller.speak({
+          text: assistantBuffer.current.replace(/```[\s\S]*?```/g, 'The full code is in chat.').replace(/[`*_>#]/g, '').slice(0, 1800),
+          locale: preferences.voiceLanguage,
+          rate: preferences.speechRate,
+          pitch: preferences.speechPitch,
+        }).catch(() => undefined)
       }
       await notifyHaptic(preferences.haptics && preferences.notifyOnComplete, true)
       await showCompletionNotification(preferences.notifyOnComplete && document.visibilityState !== 'visible', activeConversation?.title || 'Your response is ready')
@@ -457,10 +523,13 @@ export function App() {
       await refresh()
     } catch (cause) {
       if (!(cause instanceof DOMException && cause.name === 'AbortError')) {
-        const messageText = cause instanceof Error ? cause.message : 'Nebula could not send that message.'
+        const messageText = cause instanceof MobileApiError
+          ? mobileErrorMessage(cause.code, cause.message)
+          : cause instanceof Error ? cause.message : 'Nebula could not send that message.'
         setError(messageText)
       }
     } finally {
+      flushStreamingTokens()
       setRunId('')
       setRunStatus('')
       streamAbort.current = null
@@ -468,17 +537,25 @@ export function App() {
     }
   }
 
-  async function send() {
-    const content = text.trim()
+  async function send(contentOverride?: string, voiceOrigin = false) {
+    const content = (contentOverride ?? text).trim()
     if ((!content && attachments.length === 0) || runId || !online) return
     setError('')
+    voiceCaptureActive.current = false
+    if (voiceSubmitTimer.current !== null) window.clearTimeout(voiceSubmitTimer.current)
     let conversationId = activeConversation?.id
     if (!conversationId) {
-      const created = await createConversation()
-      conversationId = created.id
-      const conversation: MobileConversation = { id: conversationId, title: 'New chat', pinned: false, createdAt: now(), updatedAt: now(), messages: [] }
-      setStore((current) => ({ ...current, sessions: [conversation, ...current.sessions], activeId: conversationId! }))
-      setActiveId(conversationId)
+      try {
+        const created = await createConversation()
+        conversationId = created.id
+        const conversation: MobileConversation = { id: conversationId, title: 'New chat', pinned: false, createdAt: now(), updatedAt: now(), messages: [] }
+        setStore((current) => ({ ...current, sessions: [conversation, ...current.sessions], activeId: conversationId! }))
+        setActiveId(conversationId)
+      } catch (cause) {
+        setOnline(false)
+        setError(cause instanceof MobileApiError ? mobileErrorMessage(cause.code, cause.message) : 'Could not create a conversation.')
+        return
+      }
     }
     const submittedFiles = attachments
     const submittedIntent = intentMode
@@ -499,7 +576,7 @@ export function App() {
     setIncludeProjectContext(false)
     setDraftReadyFor(conversationId)
     void deletePrivateValue(draftKey(conversationId))
-    await executeRun(conversationId, content || display, submittedFiles, 'new', undefined, submittedIntent, submittedProjectContext)
+    await executeRun(conversationId, content || display, submittedFiles, 'new', undefined, submittedIntent, submittedProjectContext, voiceOrigin)
   }
 
   async function rerun(source: MobileMessage, mode: Exclude<MobileRunMode, 'new'>) {
@@ -539,7 +616,14 @@ export function App() {
 
   async function stop() {
     if (!runId) return
-    try { await cancelRun(runId) } catch { /* The stream may already be closing. */ }
+    const activeRunId = runId
+    setRunStatus('Stopping')
+    setApproval(null)
+    const cancellation = cancelRun(activeRunId)
+    streamAbort.current?.abort()
+    try { await cancellation } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Nebula could not confirm cancellation with your PC.')
+    }
   }
 
   async function answerApproval(approved: boolean) {
@@ -554,32 +638,62 @@ export function App() {
     }
   }
 
-  function toggleVoice() {
-    if (listening) { recognition.current?.stop(); return }
-    const Recognition = speechRecognition()
-    if (!Recognition) {
-      setError('Voice dictation is unavailable here. You can still use the microphone button on the iPhone keyboard.')
+  async function toggleVoice(forceOnline = false) {
+    if (voicePhase === 'speaking') {
+      await voiceController.current?.stopSpeaking()
+    }
+    if (listening) {
+      await voiceController.current?.stop()
       return
     }
-    const instance = new Recognition()
-    instance.lang = preferences.voiceLanguage || navigator.language || 'en-US'
-    instance.interimResults = true
-    instance.continuous = false
-    let finalText = ''
-    instance.onresult = (event) => {
-      let interim = ''
-      for (let index = 0; index < event.results.length; index += 1) {
-        const result = event.results[index]
-        if (result.isFinal) finalText += result[0].transcript
-        else interim += result[0].transcript
-      }
-      setText(`${finalText}${interim}`.trimStart())
+    if (voiceSubmitTimer.current !== null) window.clearTimeout(voiceSubmitTimer.current)
+    voiceFinalText.current = ''
+    voiceCaptureActive.current = true
+    setVoiceFailure(null)
+    setError('')
+    const controller = new MobileVoiceController({
+      onPhase: (next) => {
+        setVoicePhase(next)
+        setListening(next === 'listening')
+      },
+      onInterim: (interim) => setText(`${voiceFinalText.current}${voiceFinalText.current && interim ? ' ' : ''}${interim}`),
+      onFinal: (finalText) => {
+        voiceFinalText.current = finalText.trim()
+        setText(voiceFinalText.current)
+      },
+      onEnd: () => {
+        if (!voiceCaptureActive.current) return
+        voiceCaptureActive.current = false
+        setListening(false)
+        const finalText = voiceFinalText.current.trim()
+        if (!preferences.voiceAutoSubmit || !finalText || runId) return
+        setVoicePhase('submit_countdown')
+        voiceSubmitTimer.current = window.setTimeout(() => {
+          setVoicePhase('thinking')
+          void send(finalText, true)
+        }, preferences.voiceSilenceMs || 1200)
+      },
+      onError: (failure) => {
+        voiceCaptureActive.current = false
+        if (failure.code === 'cancelled') return
+        setVoiceFailure(failure)
+        setVoicePhase('error')
+        setListening(false)
+        setError(failure.message)
+      },
+    })
+    await voiceController.current?.dispose()
+    voiceController.current = controller
+    try {
+      await controller.start({ locale: preferences.voiceLanguage || navigator.language || 'en-US', allowOnline: forceOnline || preferences.voiceOnlineConsent })
+    } catch (cause) {
+      voiceCaptureActive.current = false
+      const failure = cause as MobileVoiceFailure
+      setVoiceFailure(failure)
+      setVoicePhase('error')
+      setListening(false)
+      setError(failure.message)
     }
-    instance.onerror = (event) => setError(`Voice input stopped: ${event.error}.`)
-    instance.onend = () => { setListening(false); recognition.current = null }
-    recognition.current = instance
-    setListening(true)
-    instance.start()
   }
 
   function onFiles(files: FileList | null) {
@@ -758,7 +872,7 @@ export function App() {
 
       {showScrollLatest && <button className="scroll-latest" onClick={scrollToLatest} aria-label="Scroll to latest message"><ArrowDown size={18} /></button>}
 
-      {error && <div className="toast-error" role="alert"><span>{error}</span><button onClick={() => setError('')} aria-label="Dismiss error"><X size={15} /></button></div>}
+      {error && <div className="toast-error" role="alert"><span>{error}</span>{voiceFailure?.requiresOnlineConsent && <button onClick={() => { patchPreferences({ voiceOnlineConsent: true }); void toggleVoice(true) }}>Allow online</button>}{voiceFailure?.code.includes('denied') && <button onClick={() => void voiceController.current?.openSettings()}>Settings</button>}<button onClick={() => { setError(''); setVoiceFailure(null) }} aria-label="Dismiss error"><X size={15} /></button></div>}
 
       <footer className="composer-wrap">
         {attachments.length > 0 && <div className="attachment-strip">{attachments.map((file) => <PendingAttachment key={`${file.name}-${file.size}-${file.lastModified}`} file={file} onRemove={() => setAttachments((current) => current.filter((item) => item !== file))} />)}</div>}
@@ -771,11 +885,11 @@ export function App() {
             <button className="composer-button composer-add" onClick={() => setModeMenuOpen(true)} disabled={!online || Boolean(runId)} aria-label="Add tools and context"><Plus size={22} /></button>
             <textarea
               ref={textarea}
-              value={text} onChange={(event) => setText(event.target.value)}
+              value={text} onChange={(event) => { if (voiceSubmitTimer.current !== null) window.clearTimeout(voiceSubmitTimer.current); if (voicePhase === 'submit_countdown') setVoicePhase('idle'); setText(event.target.value) }}
               placeholder={online ? 'Ask Nebula' : 'PC offline'} disabled={!online || Boolean(runId)} rows={1}
               onKeyDown={(event) => { if (event.key === 'Enter' && preferences.submitOnEnter && !event.shiftKey) { event.preventDefault(); void send() } }}
             />
-            <button className={`composer-button ${listening ? 'active' : ''}`} onClick={toggleVoice} disabled={!online || Boolean(runId)} aria-label="Voice input"><Mic size={20} /></button>
+            <button className={`composer-button ${listening ? 'active' : ''}`} onClick={() => void toggleVoice()} disabled={!online || Boolean(runId)} aria-label="Voice input"><Mic size={20} /></button>
             {runId ? (
               <button className="send-button stop-button" onClick={() => void stop()} aria-label="Stop Nebula"><Square size={15} fill="currentColor" /></button>
             ) : (

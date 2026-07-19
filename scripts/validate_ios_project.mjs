@@ -30,6 +30,9 @@ if (!project.includes("IPHONEOS_DEPLOYMENT_TARGET = 16.0;")) {
 if (!/appId:\s*['"]com\.jonard\.nebula['"]/.test(config)) {
   failures.push("Capacitor app ID does not match the Xcode project");
 }
+if (!/contentInset:\s*['"]never['"]/.test(config)) {
+  failures.push("The iOS WebView must be edge-to-edge (contentInset: never)");
+}
 for (const key of [
   "NSCameraUsageDescription",
   "NSMicrophoneUsageDescription",
