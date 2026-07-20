@@ -59,7 +59,7 @@ describe('Gemma training data gate', () => {
   })
 
   it('redacts private paths and blocks credential-like values', () => {
-    const sanitized = sanitizeTrainingText('Read C:\\Users\\jonar\\private\\notes.md and use token=sk-abcdefghijklmnop1234')
+    const sanitized = sanitizeTrainingText('Read C:\\Users\\Example\\private\\notes.md and use token=sk-example-secret-token-1234')
     expect(sanitized.value).toContain('[USER_HOME]')
     expect(sanitized.value).not.toContain('jonar')
     expect(sanitized.value).toContain('[REDACTED]')

@@ -8,7 +8,7 @@ Nebula Mobile is a Capacitor iOS companion. It keeps models, memory, tools, and 
 - Shared streaming conversations, search, attachments, Stop, approvals, voice fallback, and safe settings
 - Keychain-backed pairing token through the local `NebulaSecureStorage` plugin
 - Native haptics, sharing, keyboard handling, status bar, splash screen, and local completion notifications
-- PWA fallback at the existing private Tailscale URL
+- PWA fallback at the private Tailscale URL configured by the user
 - Manual Codemagic workflow that creates an unsigned IPA for personal sideloading
 
 ## Build locally on macOS
@@ -24,7 +24,7 @@ The bundle identifier is `com.jonard.nebula` and the minimum supported version i
 
 ## Build with Codemagic
 
-1. Push the scrubbed repository to a private GitHub repository.
+1. Push the scrubbed repository to GitHub.
 2. Add it to Codemagic.
 3. Start the `Nebula iOS unsigned IPA` workflow manually.
 4. Download `Nebula-sideload.ipa` from the build artifacts. It carries only an ad-hoc integrity signature; Sideloadly replaces it with your personal Apple signature.
@@ -38,5 +38,6 @@ The workflow intentionally does not store Apple credentials and does not publish
 - The PC and iPhone must be connected to the same Tailscale network.
 - Tailscale Serve must point the private HTTPS hostname to `127.0.0.1:47631`.
 - Pair the iPhone with the one-time code shown by Nebula Desktop.
+- On a fresh native install, enter the private HTTPS address shown by Mobile Connection. Existing paired installs preserve their saved address during upgrades.
 
 When the PC is unavailable, the app shows a clear offline state instead of pretending a request was queued.

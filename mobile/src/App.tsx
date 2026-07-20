@@ -20,7 +20,7 @@ import type {
 import { shouldDisplayMobileMessage } from './messageDisplay'
 import { useMobileViewport } from './useMobileViewport'
 import { DEFAULT_MOBILE_PREFERENCES, loadMobilePreferences, saveMobilePreferences } from './mobileSettings'
-import { impact, notifyHaptic, openPublicSource, showCompletionNotification } from './platform'
+import { impact, isNativeMobile, notifyHaptic, openPublicSource, showCompletionNotification } from './platform'
 import { MobileSettingsScreen } from './MobileSettingsScreen'
 import { MobileVoiceController, type MobileVoiceFailure, type MobileVoicePhase } from './voice'
 
@@ -113,6 +113,7 @@ export function App() {
   const [approval, setApproval] = useState<ApprovalEvent | null>(null)
   const [confirmation, setConfirmation] = useState('')
   const [pairCode, setPairCode] = useState('')
+  const [pairBridgeUrl, setPairBridgeUrl] = useState('')
   const [pairing, setPairing] = useState(false)
   const [error, setError] = useState('')
   const [listening, setListening] = useState(false)
@@ -159,6 +160,7 @@ export function App() {
       configureApiBridge(loaded.bridgeUrl)
       configureApiCache(loaded.cacheHistory)
       setPreferences(loaded)
+      setPairBridgeUrl(loaded.bridgeUrl || (!isNativeMobile ? window.location.origin : ''))
       setPreferencesReady(true)
     })
     return () => { active = false }
@@ -409,10 +411,17 @@ export function App() {
   async function submitPairing(event: React.FormEvent) {
     event.preventDefault()
     if (pairCode.trim().length !== 6) return
+    const bridgeUrl = pairBridgeUrl.trim().replace(/\/$/, '')
+    if (!/^https:\/\/[^\s]+$/i.test(bridgeUrl)) {
+      setError('Enter the private HTTPS address shown by Mobile Connection on your PC.')
+      return
+    }
     setPairing(true)
     setError('')
     try {
-      await pairDevice(pairCode.trim(), 'Jonard iPhone')
+      configureApiBridge(bridgeUrl)
+      patchPreferences({ bridgeUrl })
+      await pairDevice(pairCode.trim(), 'iPhone')
       setPhase('ready')
       await refresh()
     } catch (cause) {
@@ -819,11 +828,16 @@ export function App() {
           <p className="pair-copy">Generate a six-digit pairing code from Mobile Connection on your PC, then enter it here.</p>
           <form onSubmit={submitPairing}>
             <input
+              className="pair-address" inputMode="url" autoCapitalize="none" autoCorrect="off"
+              value={pairBridgeUrl} onChange={(event) => setPairBridgeUrl(event.target.value)}
+              placeholder="https://your-pc.tailnet.ts.net" aria-label="Private PC address"
+            />
+            <input
               className="pair-code" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
               value={pairCode} onChange={(event) => setPairCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
-              placeholder="000000" aria-label="Pairing code" autoFocus
+              placeholder="000000" aria-label="Pairing code"
             />
-            <button className="primary-button" disabled={pairCode.length !== 6 || pairing}>{pairing ? 'Pairing...' : 'Connect privately'}</button>
+            <button className="primary-button" disabled={pairCode.length !== 6 || !pairBridgeUrl.trim() || pairing}>{pairing ? 'Pairing...' : 'Connect privately'}</button>
           </form>
           {error && <p className="inline-error" role="alert">{error}</p>}
           <p className="privacy-note">Your prompts remain between this device and your PC through your private Tailscale network.</p>

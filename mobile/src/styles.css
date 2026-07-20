@@ -68,6 +68,9 @@ button { color: inherit; }
 .eyebrow { margin: 18px 0 7px; color: rgba(177,187,215,.66); font-size: 10px; font-weight: 750; letter-spacing: .15em; }
 .pair-card h1 { margin: 0; font-size: 28px; letter-spacing: 0; }
 .pair-copy { margin: 12px auto 22px; max-width: 310px; color: var(--muted); font-size: 14px; line-height: 1.55; }
+.pair-address { width: 100%; height: 48px; margin-bottom: 11px; border: 1px solid rgba(255,255,255,.12); border-radius: 15px; outline: none; background: rgba(3,5,10,.48); color: white; font-size: 16px; padding: 0 15px; }
+.pair-address::placeholder { color: rgba(220,224,238,.38); }
+.pair-address:focus { border-color: rgba(118,232,242,.56); box-shadow: 0 0 0 4px rgba(118,232,242,.08), inset 0 1px rgba(255,255,255,.08); }
 .pair-code { width: 100%; height: 64px; border: 1px solid rgba(255,255,255,.12); border-radius: 19px; outline: none; background: rgba(3,5,10,.48); color: white; text-align: center; font-size: 28px; font-weight: 700; letter-spacing: .28em; padding-left: .28em; }
 .pair-code:focus { border-color: rgba(118,232,242,.56); box-shadow: 0 0 0 4px rgba(118,232,242,.08), inset 0 1px rgba(255,255,255,.08); }
 .primary-button { width: 100%; height: 51px; margin-top: 13px; border: 0; border-radius: 17px; background: linear-gradient(120deg, #73d9e7, #9d8aff 54%, #e77abf); color: #090a10; font-weight: 750; box-shadow: 0 12px 28px rgba(137,111,229,.22); }

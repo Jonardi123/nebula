@@ -16,7 +16,9 @@ storage. The phone never connects directly to LM Studio.
 1. Open **Mobile Connection** from Nebula's sidebar.
 2. Enable the private Tailscale link.
 3. Open the displayed HTTPS URL or scan its QR code on the iPhone.
-4. Generate a pairing code on the PC and enter it on the phone.
+4. Generate a pairing code on the PC and enter it on the phone. The PWA uses
+   its current private origin automatically; the native app also asks for the
+   HTTPS address displayed by Mobile Connection.
 5. In Safari, choose **Share > Add to Home Screen**.
 
 Pairing codes are single-use and expire after ten minutes. A successful pairing
@@ -68,6 +70,8 @@ preserve the same authenticated and redacted mobile boundary.
 - **Offline on iPhone:** wake the PC, start Nebula, and confirm both devices are
   connected to Tailscale.
 - **Pairing rejected:** generate a new code; old and already-used codes cannot be reused.
+- **Native app has no PC address:** copy the private HTTPS address from Mobile
+  Connection. Nebula does not ship a personal hostname in the public source.
 - **LM Studio unavailable:** start its local server and load a compatible model.
 - **Private link unavailable:** reopen Mobile Connection and enable Serve again.
 - **Old phone should no longer connect:** revoke it from Paired devices.

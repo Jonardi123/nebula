@@ -7,7 +7,7 @@ This document records the architecture that exists today and the boundaries Nebu
 | System | Current implementation | Notes |
 | --- | --- | --- |
 | User interface | React components under `src/components`, coordinated by `App.tsx` | Feature panels are loaded on demand. Chat remains the primary shell. |
-| Conversations | `useMessages.ts`, `conversations.ts`, browser local storage | Supports folders, pinning, search, bounded history, normalization, and corrupt-data recovery. |
+| Conversations | `storage.ts`, Rust `storage.rs`, SQLite with a legacy adapter | Supports folders, indexed search, streamed persistence, migration backup, and corrupt-data recovery. |
 | Projects and memory | `workspaceAwareness.ts`, `contextEngine.ts`, `unifiedMemory.ts`, Rust filesystem commands | Context is assembled per request and project data stays local. |
 | Model manager | `modelManager.ts` | Owns warm/load/switch/idle-unload behavior and lifecycle events. |
 | Inference router | `modelRouter.ts`, `modelOrchestrator.ts`, `agent.ts` | Chooses daily/code/review roles and keeps the user-facing identity as Nebula. |
@@ -30,9 +30,9 @@ This document records the architecture that exists today and the boundaries Nebu
 ## Current Technical Debt
 
 1. `App.tsx` and the Rust `lib.rs` remain large coordinators. New behavior should move behind existing libraries or narrowly scoped services instead of adding more inline logic.
-2. Browser local storage is used by many independent stores. It is bounded and normalized in important paths, but it is not transactional and has limited quota. A future storage adapter should move durable conversations and diagnostics to SQLite or an app-data database.
+2. Conversations and namespaced durable documents use SQLite, while some low-risk preferences and legacy feature stores still use local storage. Those remaining stores should move through the existing `DocumentRepository` boundary as their schemas stabilize.
 3. `lmstudio.ts` contains both provider selection and LM Studio-specific transport behavior. Runtime adapters should eventually own discovery, inference, load, unload, and health operations.
-4. Model operations are serialized for safety. Cancellation currently stops active inference and commands, but model-load and context-build cancellation need dedicated cooperative signals in a later stage.
+4. Agent cancellation now crosses inference, commands, approvals, and most orchestration work. LM Studio model loading cannot always be cancelled server-side, so abandoned load results must continue to be ignored by run ID.
 5. The Rust backend is a single module. Split it by filesystem, command, model runtime, web, screen, and system domains before adding a download manager.
 6. Update delivery is not implemented. It must use signed release artifacts and an explicit user-facing update policy.
 
@@ -61,12 +61,12 @@ The official fine-tuned Qwen 1.5B model is a recommended catalog entry, not a ha
 - Keep active inference and command cancellation reliable.
 - Add regression tests for persistence, navigation, routing, and the composer.
 
-### Stage 2: Durable storage and cancellation
+### Stage 2: Durable storage and cancellation (implemented foundation)
 
-- Introduce a versioned `ConversationRepository` backed by SQLite/app data.
-- Migrate local-storage conversations with rollback and export support.
-- Thread one cancellation signal through routing, model loading, context building, inference, and tools.
-- Split structured logs from UI presentation and add retention controls.
+- Continue migrating secondary feature stores through `DocumentRepository`.
+- Expand corruption and interrupted-session recovery tests.
+- Preserve run-ID suppression for runtime operations that cannot be cancelled remotely.
+- Add finer user controls for diagnostic retention and redacted export.
 
 ### Stage 3: Runtime adapters
 

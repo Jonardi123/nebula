@@ -2,7 +2,7 @@ import type { MobilePreferences } from './types'
 import { readPreference, writePreference } from './platform'
 
 const SETTINGS_KEY = 'mobile-preferences-v1'
-export const DEFAULT_BRIDGE_URL = 'https://nebula-private-host.invalid'
+export const DEFAULT_BRIDGE_URL = ''
 
 export const DEFAULT_MOBILE_PREFERENCES: MobilePreferences = {
   version: 1,

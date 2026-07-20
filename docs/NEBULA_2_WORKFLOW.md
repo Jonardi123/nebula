@@ -10,7 +10,7 @@ Remote providers remain optional. When 9Router or OpenRouter is active, Settings
 
 ## Conversations
 
-Conversation storage is migrated to schema version 2 in the existing `nebula-conversations-v1` local-storage record. Version 2 adds user-created folders while preserving existing sessions. Search includes titles and message bodies. Ctrl+K searches actions, project files, models, panels, and conversations.
+Conversation storage is migrated into Nebula's SQLite repository with a verified legacy backup and rollback path. User-created folders and indexed search preserve existing sessions. Ctrl+K searches actions, project files, models, panels, and conversations.
 
 Malformed or unavailable browser storage falls back to a recoverable local session instead of breaking chat.
 

@@ -1,203 +1,119 @@
 # Nebula
 
-Current release: **Nebula: Black Matter** (`2.0.0`, build `2`). Black Matter is Nebula's first major named release, with selectable themes and a unified execution-control system across desktop and mobile.
+**A local AI operating layer for Windows and iPhone.**
 
-Architecture and staged local-model platform roadmap: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Nebula turns local language models into one persistent assistant for chat, projects, memory, research, terminal work, voice, and mobile access. Models run through LM Studio on the user's PC; Nebula supplies the durable product around them: context, routing, tools, permissions, diagnostics, and a consistent identity.
 
-Nebula 2.0 adds consolidated model control, structured composer attachments, searchable and foldered conversations, persisted project health, context pins, memory-quality review, voice diagnostics, safe patch batches, and an optional Daily Brief. See [the workflow upgrade notes](docs/NEBULA_2_WORKFLOW.md).
+Current release: **Nebula 2.0: Black Matter**.
 
-Nebula is a Windows-first, local-first desktop AI assistant foundation built with Tauri, React, TypeScript, and Tailwind CSS. It uses LM Studio's local OpenAI-compatible chat completions API.
+[Download the latest Windows release](https://github.com/Jonardi123/jonard-os/releases/latest) | [Build Week notes](docs/BUILD_WEEK.md) | [Architecture](docs/ARCHITECTURE.md)
 
-Default LM Studio endpoint:
+![Nebula desktop](docs/assets/build-week/nebula-desktop.jpg)
 
-```txt
-http://localhost:1234/v1/chat/completions
+## Why Nebula
+
+Local models are useful, but a model server alone does not remember projects, explain what tools ran, protect the computer, or follow the user to another device. Nebula keeps those responsibilities outside the model so users can swap runtimes without replacing the assistant.
+
+- **Local-first:** prompts, projects, memory, and conversations remain on the PC by default.
+- **One assistant, multiple engines:** automatic daily, coding, and review routing or a single-model mode.
+- **Actions with receipts:** files, terminal jobs, app launches, web research, and approvals are logged without exposing hidden reasoning.
+- **Shared context:** project awareness and reviewed memory survive model switches.
+- **Private mobile companion:** the iPhone client connects to the user's own PC over a private HTTPS bridge.
+
+## Working Capabilities
+
+- Streaming LM Studio chat with model discovery, loading, fallback, health checks, and Stop
+- SQLite-backed conversations, folders, search, recovery, timeline, tasks, and diagnostics
+- Project profiles, file search, context pins, memory review, and replayable task runs
+- Cancellable terminal jobs with streamed output, timeouts, process-tree termination, and execution receipts
+- Approval, Safe, and session-only Full Access modes with permanent catastrophic-action blocks
+- Installed-app discovery, aliases, audited launching, and ambiguity handling
+- Web search and safe public-page fetch with sanitized source cards
+- Skills registry, quick actions, agent activity, model dashboard, and benchmark tooling
+- Windows voice overlay and native/PWA iPhone clients with shared history, attachments, Stop, and approvals
+- Reproducible QLoRA data generation, validation, evaluation, merge, and GGUF preparation tooling
+
+![Nebula models and tools](docs/assets/build-week/nebula-models.jpg)
+
+## Architecture
+
+```text
+Windows / iPhone UI
+        |
+Conversation + project storage
+        |
+Orchestrator -- context + memory -- skill registry
+        |
+Permissions and tool executor
+        |
+Runtime adapters (LM Studio today)
 ```
 
-## Features
+The React interface never talks directly to SQLite. Repository adapters call versioned Tauri storage commands. Agent runs share one cancellation controller across model readiness, context building, inference, tools, approvals, and review. LM Studio is the implemented runtime, but routing and storage are designed independently of any single model.
 
-- Codex-style dark chat workspace
-- Fullscreen cosmic startup splash with boot status sequence and skip controls
-- Skills system with enable/disable controls, permissions, risk levels, tool exposure, prompt additions, and examples
-- Local prompt-skill builder for safe, non-executable skill packs
-- Model dashboard with LM Studio model listing, load/warm actions, assignments, and local run stats
-- Project Profiles with detected framework, package manager, scripts, notes, and preferred models
-- Task Mode with replayable timeline records for prompts, model routes, tool calls, files, commands, errors, sources, and final results
-- One-click Fix My App workflow that diagnoses and proposes a fix plan before editing
-- Source Cards for web search/fetch results with URL, date checked, trust hints, and memory proposal action
-- Local notification center for task completion, model load, failed commands, memory proposals, and app status
-- Launcher for known apps, selected projects, indexed files, Nebula actions, and Screenshot Ask Mode
-- Screenshot Ask flow through the Ctrl+Space ambient overlay
-- Quick Actions for bug finding, project review, current-file explanation, code optimization, safe refactor planning, README summaries, model diagnosis, and temporary context clearing
-- Agent Activity page with live operational state for planner, coding, review, memory, search, safety, and future connector agents
-- Intelligent file explorer with search, file-type icons, git/recent markers, importance scoring, pins, favorites, inline AI actions, and lightweight file summaries
-- Predictive suggestions for README, package metadata, and code files based on the active workspace
-- AI Insights dashboard for daily requests, routing confidence, response time, skill/model usage, analyzed files, review count, and rough time-saved estimate
-- Replay page for previous Nebula sessions using safe timeline summaries
-- LM Studio status check and chat requests
-- Agent loop with OpenAI-compatible function calling plus JSON tool fallback
-- Safety classification for commands and tools
-- Approval modal before dangerous actions
-- File explorer with read-only file opening
-- Local memory folder and Markdown memory files
-- Terminal/action log with timestamps
-- Agents, tools, memory, and settings panels
-- Web Search skill with provider placeholder and manual/mock fallback
-- Web Call skill with public webpage fetch, HTML stripping, content limits, and local/private URL blocking
-- Tauri backend commands for filesystem, shell commands, app opening, system info, and sleep
-- Placeholder architecture for ChatGPT, Gemini, offline STT/TTS, screenshot/vision, vector memory, dataset export, and multi-agent voting
-- Recoverable chat sessions with pinned history and restart-safe task recovery
-- Explicit Task Queue for long-running work that never auto-resumes risky/old operations after restart
-- Local project content search from the Files panel (filename filter plus safe text search)
-- Context Inspector and Privacy Dashboard for visible context/data boundaries
-- Fine-Tuning Lab that redacts/filters accepted local traces into train/validation JSONL for QLoRA
-- Private iPhone PWA with shared chat history, streaming responses, attachments, voice dictation, Stop, and mobile approval cards through Tailscale Serve
-- Native iPhone companion project with Keychain pairing, native haptics/notifications, safe PC settings, and a Codemagic unsigned-IPA workflow. See [the iOS guide](docs/IOS_NATIVE.md).
-- Black Matter and Nebula Original themes with live switching, accessible motion/transparency fallbacks, and the Event Horizon startup sequence
-- Approval, Safe, and session-only Full Access execution modes with a permanent catastrophic-action blocklist
-- Cancellable terminal jobs with streamed output, command history, execution receipts, health diagnostics, and process-tree termination
-- Installed-app discovery, trusted aliases, recent apps, ambiguity handling, and audited app launches
-- Twelve categorized built-in avatars plus custom image support
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the detailed system map and boundaries.
 
-## Requirements
+## Quick Start
 
-- Windows
-- Node.js 20+
-- Rust and Cargo for Tauri native app development
-- LM Studio with the local server enabled
+### Requirements
 
-Rust is required for native Tauri development. If `cargo` is not visible after installing Rust, restart the terminal or add `%USERPROFILE%\.cargo\bin` to `PATH`.
+- Windows 10 or 11
+- [LM Studio](https://lmstudio.ai/) with its local server enabled
+- Node.js 20+ and Rust only when building from source
 
-## Setup
+### Install a release
+
+1. Download the installer from [GitHub Releases](https://github.com/Jonardi123/jonard-os/releases/latest).
+2. In LM Studio, download and load an instruction or coding GGUF that fits your hardware.
+3. Start the LM Studio local server. Nebula defaults to `http://localhost:1234/v1/chat/completions`.
+4. Open Nebula, choose the detected model, and optionally select a project folder.
+
+Models are not bundled in the installer. Nebula can be used with any compatible model and does not require the project's experimental fine-tunes.
+
+### Build from source
 
 ```powershell
 npm.cmd install
+npm.cmd run test
+npm.cmd run build
+npm.cmd run tauri:build
 ```
 
-Start LM Studio, load a coding model, and enable the local server. A coding model around 7B-20B is recommended.
-
-## Run
-
-Web development shell:
-
-```powershell
-npm.cmd run dev
-```
-
-Tauri desktop app:
+For development:
 
 ```powershell
 npm.cmd run tauri:dev
 ```
 
-Production build:
+The mobile web client is built with `npm.cmd run mobile:build`. Private pairing and native iOS notes are in [docs/MOBILE_PWA.md](docs/MOBILE_PWA.md) and [docs/IOS_NATIVE.md](docs/IOS_NATIVE.md). No private bridge address, pairing token, IPA, or signing material is included in this repository.
 
-```powershell
-npm.cmd run build
-npm.cmd run tauri:build
-```
+## Judge Path
 
-Mobile PWA development build:
+1. Install Nebula and start it while LM Studio is offline to see recoverable setup behavior.
+2. Start LM Studio, load a model, and select it from Nebula's model dropdown.
+3. Send a normal chat message, then select a project and run **Review Project**.
+4. Open Terminal and run a safe command such as `git status`; inspect its streamed receipt in Timeline.
+5. Open Skills or web research and inspect the source cards and activity log.
+6. Press Stop during a response or command and verify no late output resumes the run.
 
-```powershell
-npm.cmd run mobile:build
-```
+## Safety
 
-The production desktop binary embeds the mobile build and serves it only on
-`127.0.0.1:47631`. See [Mobile PWA](docs/MOBILE_PWA.md) for private Tailscale
-setup, iPhone installation, pairing, and troubleshooting.
+Nebula defaults to **Allow Safe Executions**. **Ask for Approval** confirms every side effect. **Full Access** is session-only, requires typed confirmation, never elevates to administrator, and still cannot bypass permanent blocks for drive formatting, credential theft, security disabling, hidden execution, or destructive system-folder operations.
 
-## LM Studio
+Tool retries are not automatic. Nebula does not claim an action succeeded without a confirmed tool result.
 
-Default settings:
+## Training
 
-- Endpoint: `http://localhost:1234/v1/chat/completions`
-- Model: `local-model`
-- Temperature: `0.4`
-- Max tokens: `2048`
+The repository includes reusable generators, validation gates, evaluation scripts, QLoRA configuration, and notebooks. Large generated corpora, model weights, adapters, GGUF files, local traces, and private memory remain excluded from Git.
 
-If LM Studio is running a different served model name, update it in Settings.
+Training is experimental and is not required to run Nebula. See [training/README.md](training/README.md).
 
-## Memory
+## Build Week
 
-Nebula creates:
+The project predates Build Week. Between July 16 and July 19, 2026, Codex with GPT-5.6 helped extend and verify the native iPhone companion, mobile reliability, voice integration, model profiling, defensive-security training pipeline, Black Matter release, warm-model behavior, and live web research. Product direction, safety boundaries, test interpretation, and final decisions remained human-led.
 
-```txt
-memory/
-user.md
-projects.md
-web_learnings.md
-pc_fixes.md
-lessons_learned.md
-commands.md
-preferences.md
-```
+The dated evidence and exact boundary between existing work and Build Week additions are documented in [docs/BUILD_WEEK.md](docs/BUILD_WEEK.md).
 
-Memory rules:
+## License
 
-- Save useful lessons only
-- Do not save random temporary junk
-- Web-learned information needs source URL and date checked
-- Old web information should be marked `needs verification`
-- Save repeated fixes, preferences, and project-specific knowledge
-
-## Skills
-
-Skills live in `src/skills/` and define:
-
-- Name and description
-- Enabled/disabled state
-- Required permissions
-- Tools exposed to the model
-- System prompt additions
-- Examples
-- Risk level
-
-The Skills sidebar tab lets you enable or disable installed skills. Enabled skill tools are converted into LM Studio/OpenAI-compatible function tool definitions for the agent loop.
-
-## Productivity Surfaces
-
-Phase 2 adds daily-use surfaces that reuse Nebula's existing orchestration instead of bypassing it:
-
-- Quick Actions start normal Nebula chat/task runs, so routing, context injection, skill selection, safety checks, and timeline logging still apply.
-- File Explorer inline actions use the selected file as target context and never edit automatically.
-- Agent Activity and AI Insights are read-only dashboards built from diagnostics, task history, skill stats, model stats, and timeline events.
-- Replay Mode shows recorded actions, tools, files, routes, timings, and results. It does not expose hidden reasoning.
-- Clear Temporary Context only clears transient session/UI context. It does not delete memory, tasks, profiles, source cards, or timeline history.
-
-Installed skills:
-
-- Memory
-- Files
-- Terminal
-- Web Search
-- Web Call
-- PC Control
-
-Web Search currently uses a manual/mock provider unless a SerpAPI, Tavily, or Brave provider is configured in the future. Web Call blocks private/local network URLs and downloadable file types by default.
-
-## Safety Notes
-
-Nebula defaults to **Allow Safe Executions**. **Ask for Approval** confirms every command or side-effectful tool. **Full Access** requires typing `ENABLE FULL ACCESS`, lasts only for the current session, and resets to Safe after restart.
-
-Every mode permanently blocks drive formatting, credential theft, antivirus/security disabling, hidden execution flows, random download-and-execute commands, and destructive system-folder operations. Full Access does not bypass those guards and never elevates to administrator.
-
-The app never runs commands as admin automatically. Commands run in the selected project folder by default.
-
-## Fine-Tuning
-
-Nebula can collect local, user-reviewed traces and create a redacted train/validation split in **Fine-Tuning Lab**. This is data preparation, not pretend training.
-
-For an 8 GB GPU, the included practical experiment is a 4-bit QLoRA adapter for a Gemma 7B Hugging Face/Safetensors base model. LM Studio GGUF files are inference files and cannot be used as LoRA training bases. See [training/README.md](training/README.md) for preflight, dependency, dataset, and training steps.
-
-## Roadmap
-
-- Native Windows toast notifications
-- Real cancellable process management
-- File edit staging and multi-file diff review
-- ChatGPT/Gemini escalation interfaces
-- Offline voice input and TTS output
-- Screenshot/vision agent
-- Vector database memory
-- Fine-tuning dataset export
-- Multi-agent debate and voting
+[MIT](LICENSE), Copyright (c) 2026 Jonard.
