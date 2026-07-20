@@ -6,6 +6,8 @@ Nebula turns local language models into one persistent assistant for chat, proje
 
 Current release: **Nebula 2.0: Black Matter**.
 
+Nebula is independently created by **Jonard, a 14-year-old developer from Albania**, with parental support for the Build Week submission. Jonard shaped the product, architecture, safety decisions, and real-device testing while using Codex with GPT-5.6 to accelerate implementation and verification.
+
 [Download the latest Windows release](https://github.com/Jonardi123/jonard-os/releases/latest) | [Build Week notes](docs/BUILD_WEEK.md) | [Architecture](docs/ARCHITECTURE.md)
 
 ![Nebula desktop](docs/assets/build-week/nebula-desktop.jpg)

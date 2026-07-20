@@ -8,6 +8,8 @@ Nebula: A Local AI Operating Layer
 
 One private assistant for local models, projects, memory, tools, Windows, and iPhone.
 
+Nebula is independently created by Jonard, a 14-year-old developer from Albania, with parental support for this submission. He directed the product, architecture, safety decisions, and real-device testing while using Codex with GPT-5.6 to accelerate implementation and verification.
+
 ## Category
 
 Developer Tools
