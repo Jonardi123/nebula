@@ -66,8 +66,8 @@ Runtime adapters beyond LM Studio, a built-in model/download manager, signed upd
 
 ## Try It
 
-- Repository: https://github.com/Jonardi123/jonard-os
-- Windows release: https://github.com/Jonardi123/jonard-os/releases/latest
+- Repository: https://github.com/Jonardi123/nebula
+- Windows release: https://github.com/Jonardi123/nebula/releases/latest
 - Demo video: `YOUTUBE_URL_PENDING`
 - Codex `/feedback` session: `FEEDBACK_SESSION_ID_PENDING`
 

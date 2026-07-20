@@ -8,7 +8,7 @@ Current release: **Nebula 2.0: Black Matter**.
 
 Nebula is independently created by **Jonard, a 14-year-old developer from Albania**, with parental support for the Build Week submission. Jonard shaped the product, architecture, safety decisions, and real-device testing while using Codex with GPT-5.6 to accelerate implementation and verification.
 
-[Download the latest Windows release](https://github.com/Jonardi123/jonard-os/releases/latest) | [Build Week notes](docs/BUILD_WEEK.md) | [Architecture](docs/ARCHITECTURE.md)
+[Download the latest Windows release](https://github.com/Jonardi123/nebula/releases/latest) | [Build Week notes](docs/BUILD_WEEK.md) | [Architecture](docs/ARCHITECTURE.md)
 
 ![Nebula desktop](docs/assets/build-week/nebula-desktop.jpg)
 
@@ -65,7 +65,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the detailed system map and
 
 ### Install a release
 
-1. Download the installer from [GitHub Releases](https://github.com/Jonardi123/jonard-os/releases/latest).
+1. Download the installer from [GitHub Releases](https://github.com/Jonardi123/nebula/releases/latest).
 2. In LM Studio, download and load an instruction or coding GGUF that fits your hardware.
 3. Start the LM Studio local server. Nebula defaults to `http://localhost:1234/v1/chat/completions`.
 4. Open Nebula, choose the detected model, and optionally select a project folder.
