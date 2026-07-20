@@ -69,7 +69,7 @@ Runtime adapters beyond LM Studio, a built-in model/download manager, signed upd
 - Repository: https://github.com/Jonardi123/nebula
 - Windows release: https://github.com/Jonardi123/nebula/releases/latest
 - Demo video: https://youtu.be/Z7kHWXRXMR8
-- Codex `/feedback` session: `FEEDBACK_SESSION_ID_PENDING`
+- Codex `/feedback` session: `019f0ab3-ca05-7e30-acf5-a89ca7b67d06`
 
 ### Judge Setup
 
