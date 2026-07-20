@@ -8,14 +8,14 @@ Nebula existed before OpenAI Build Week. It already had a Tauri/React desktop sh
 
 | Date | Evidence | Addition |
 | --- | --- | --- |
-| July 16 | `13d762c`, `ab65d58` | Prepared the native iOS companion and corrected unsigned IPA packaging. |
-| July 16 | `a0a9db9`, `3b439ff`, `3cfbe8d`, `8b32ffd` | Upgraded the mobile experience, refresh behavior, standalone viewport, and composer placement. |
-| July 17 | `f1e0903` | Added local Qwen3 benchmark profiling. |
-| July 17 | `0709c6c`, `8a5bb6f` | Built and expanded the defensive-security training pipeline to 4,000 reviewed examples. |
-| July 19 | `b15c4a7`, `d21e4b3` | Improved iOS fullscreen/reliability and repaired the native voice plugin build. |
-| July 19 | `7a37f3d` | Shipped Nebula 2.0 Black Matter with terminal controls, app launching, execution modes, themes, and auditing. |
-| July 19 | `45a817b` | Removed the fake mobile streaming placeholder and reduced unnecessary warm-model delay. |
-| July 19 | `5d55793` | Made web research use live results and reject hallucinated source markup. |
+| July 16 | `0f69b1a`, `c997ac0` | Prepared the native iOS companion and corrected unsigned IPA packaging. |
+| July 16 | `308f623`, `7f3a117`, `9a210a5`, `e0951e3` | Upgraded the mobile experience, refresh behavior, standalone viewport, and composer placement. |
+| July 17 | `a818eda` | Added local Qwen3 benchmark profiling. |
+| July 17 | `c0bde8f`, `89376c7` | Built and expanded the defensive-security training pipeline to 4,000 reviewed examples. |
+| July 19 | `6451d9a`, `8735b64` | Improved iOS fullscreen/reliability and repaired the native voice plugin build. |
+| July 19 | `b925d55` | Shipped Nebula 2.0 Black Matter with terminal controls, app launching, execution modes, themes, and auditing. |
+| July 19 | `ae3f5b1` | Removed the fake mobile streaming placeholder and reduced unnecessary warm-model delay. |
+| July 19 | `626ab20` | Made web research use live results and reject hallucinated source markup. |
 
 The submission-preparation commit adds public documentation, privacy-safe mobile setup, release verification, screenshots, and the final Build Week video chapter.
 
