@@ -13,6 +13,9 @@ sys.path.insert(0, str(ROOT / "training/scripts"))
 
 import generate_synthetic_dataset  # noqa: E402
 import generate_qwen3_dataset  # noqa: E402
+import generate_nebula_100k  # noqa: E402
+import create_nebula_training_stages  # noqa: E402
+import review_nebula_candidates  # noqa: E402
 import prepare_dataset  # noqa: E402
 import train_qlora  # noqa: E402
 import validate_dataset  # noqa: E402
@@ -80,7 +83,7 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(any("specialist" in reason for reason in reasons))
 
     def test_secret_is_removed_and_blocks_example(self):
-        text, changed, blocked = prepare_dataset.sanitize("token=sk-abcdefghijklmnop1234")
+        text, changed, blocked = prepare_dataset.sanitize("token=sk-example-secret-token-1234")
         self.assertTrue(changed)
         self.assertTrue(blocked)
         self.assertNotIn("abcdefghijklmnop", text)
@@ -136,6 +139,31 @@ class PipelineTests(unittest.TestCase):
             heldout.write_text(json.dumps({"prompt": "  REVIEW this exact code  "}) + "\n", encoding="utf-8")
             overlap = validate_dataset.normalized_user_prompts(dataset) & validate_dataset.heldout_prompts([heldout])
             self.assertEqual(overlap, {"review this exact code"})
+
+    def test_nebula_100k_generator_is_exact_and_split_isolated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "corpus"
+            totals = {category: 20 for category in generate_nebula_100k.CATEGORY_TOTALS}
+            manifest = generate_nebula_100k.generate(output, totals)
+            self.assertEqual(manifest["total"], 220)
+            self.assertEqual(manifest["splits"]["train"]["total"], 198)
+            self.assertEqual(manifest["splits"]["validation"]["total"], 11)
+            self.assertEqual(manifest["splits"]["hidden"]["total"], 11)
+            self.assertEqual(manifest["familyOverlap"], 0)
+            self.assertEqual(manifest["uniqueUserPrompts"], 220)
+
+    def test_stage_quotas_are_exact_and_sum_to_requested_size(self):
+        for size in (5000, 20000, 50000):
+            quota = create_nebula_training_stages.quotas(size)
+            self.assertEqual(sum(quota.values()), size)
+            self.assertEqual(quota["reverse_engineering"], size * 32 // 100)
+
+    def test_reviewer_json_and_static_safety_gates(self):
+        review = review_nebula_candidates.parse_review('{"approved":true,"score":95,"reason":"sound"}')
+        self.assertTrue(review["approved"])
+        self.assertIsNone(review_nebula_candidates.static_rejection("I'm Nebula.", "general_chat"))
+        self.assertIsNotNone(review_nebula_candidates.static_rejection("I'm Qwen.", "general_chat"))
+        self.assertIsNotNone(review_nebula_candidates.static_rejection('{"tool":"made_up","args":{}}', "tool_agent_workflows"))
 
 
 if __name__ == "__main__":

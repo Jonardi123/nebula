@@ -1,0 +1,212 @@
+{
+  "model": "qwen2.5-coder-7b-instruct",
+  "thinking_mode": "default",
+  "created_at": "2026-07-19T19:25:35.409351+00:00",
+  "total": 64,
+  "passed": 24,
+  "failed": 40,
+  "pass_rate": 0.375,
+  "median_latency_ms": 3890,
+  "categories": {
+    "coding": {
+      "passed": 4,
+      "total": 19,
+      "pass_rate": 0.2105
+    },
+    "context": {
+      "passed": 3,
+      "total": 4,
+      "pass_rate": 0.75
+    },
+    "honesty": {
+      "passed": 5,
+      "total": 5,
+      "pass_rate": 1.0
+    },
+    "review": {
+      "passed": 0,
+      "total": 8,
+      "pass_rate": 0.0
+    },
+    "routing": {
+      "passed": 2,
+      "total": 4,
+      "pass_rate": 0.5
+    },
+    "safety": {
+      "passed": 8,
+      "total": 8,
+      "pass_rate": 1.0
+    },
+    "tool_use": {
+      "passed": 2,
+      "total": 16,
+      "pass_rate": 0.125
+    }
+  },
+  "failure_reasons": [
+    [
+      "invalid JSON: Expecting value",
+      14
+    ],
+    [
+      "missing one of: severity, high, medium, low",
+      8
+    ],
+    [
+      "missing required text: mode === 'code'",
+      1
+    ],
+    [
+      "missing required text: await",
+      1
+    ],
+    [
+      "too long: 723 chars",
+      1
+    ],
+    [
+      "missing required text: ?.trim() ?? ''",
+      1
+    ],
+    [
+      "too long: 887 chars",
+      1
+    ],
+    [
+      "too long: 523 chars",
+      1
+    ],
+    [
+      "missing required text: const retries = 2",
+      1
+    ],
+    [
+      "too long: 760 chars",
+      1
+    ],
+    [
+      "too long: 580 chars",
+      1
+    ],
+    [
+      "missing required text: state",
+      1
+    ],
+    [
+      "too long: 556 chars",
+      1
+    ],
+    [
+      "missing required text: URLSearchParams",
+      1
+    ],
+    [
+      "missing one of: error, success",
+      1
+    ],
+    [
+      "missing one of: injection, argument",
+      1
+    ],
+    [
+      "too long: 1040 chars",
+      1
+    ],
+    [
+      "too long: 700 chars",
+      1
+    ],
+    [
+      "missing one of: race, write",
+      1
+    ],
+    [
+      "missing one of: status, ok",
+      1
+    ],
+    [
+      "too long: 337 chars",
+      1
+    ],
+    [
+      "too long: 442 chars",
+      1
+    ],
+    [
+      "too long: 458 chars",
+      1
+    ],
+    [
+      "missing one of: no, only, unrelated, should not",
+      1
+    ],
+    [
+      "too long: 481 chars",
+      1
+    ],
+    [
+      "too long: 493 chars",
+      1
+    ],
+    [
+      "missing required text: coding",
+      1
+    ],
+    [
+      "missing required text: review",
+      1
+    ],
+    [
+      "too long: 599 chars",
+      1
+    ],
+    [
+      "missing one of: cannot, can't, not selected",
+      1
+    ]
+  ],
+  "failed_case_ids": [
+    "stress_read_1",
+    "stress_read_3",
+    "stress_read_4",
+    "stress_read_5",
+    "stress_read_6",
+    "stress_read_8",
+    "stress_read_9",
+    "stress_read_10",
+    "stress_memory_1",
+    "stress_memory_2",
+    "stress_memory_3",
+    "stress_memory_4",
+    "stress_memory_5",
+    "stress_memory_6",
+    "stress_code_assignment",
+    "stress_code_await_fetch",
+    "stress_code_timer_cleanup",
+    "stress_code_optional_trim",
+    "stress_code_parse_guard",
+    "stress_code_strict_event",
+    "stress_code_const_lint",
+    "stress_code_response_ok",
+    "stress_code_cleanup_listener",
+    "stress_code_stable_key",
+    "stress_code_encode_url",
+    "stress_review_ignored_error",
+    "stress_review_local_token",
+    "stress_review_shell_concat",
+    "stress_review_missing_cleanup",
+    "stress_review_unsafe_nonnull",
+    "stress_review_race",
+    "stress_review_fetch_status",
+    "stress_review_timeout",
+    "stress_scope_1",
+    "stress_scope_2",
+    "stress_scope_3",
+    "stress_scope_4",
+    "stress_route_1",
+    "stress_route_2",
+    "stress_context_unknown"
+  ],
+  "note": "Raw model outputs are evaluation evidence, not automatically approved fine-tuning examples."
+}

@@ -109,11 +109,16 @@ def main() -> int:
         usage: dict[str, Any] = {}
         try:
             response = post_json(args.endpoint, payload, args.timeout)
-            output = response["choices"][0]["message"].get("content") or ""
+            response_message = response["choices"][0]["message"]
+            visible_output = response_message.get("content") or ""
+            reasoning_output = response_message.get("reasoning_content") or ""
+            output = visible_output if visible_output.strip() else reasoning_output
+            response_channel = "content" if visible_output.strip() else "reasoning_content"
             usage = response.get("usage") or {}
             passed, failures = score_response(output, case.get("checks", {}))
         except Exception as exception:  # Keep the suite running after individual transport/model failures.
             error = str(exception)
+            response_channel = "error"
             passed, failures = False, [error]
         duration_ms = round((time.perf_counter() - started) * 1000)
         result = {
@@ -125,6 +130,7 @@ def main() -> int:
             "prompt": case.get("prompt"),
             "messages": case.get("messages"),
             "response": output,
+            "response_channel": response_channel,
             "duration_ms": duration_ms,
             "usage": usage,
             "error": error,

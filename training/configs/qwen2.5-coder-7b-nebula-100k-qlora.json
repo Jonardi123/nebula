@@ -1,0 +1,22 @@
+{
+  "base_model": "Qwen/Qwen2.5-Coder-7B-Instruct",
+  "run_name": "nebula-qwen2.5-coder-7b-unified-100k-v1",
+  "train_file": "training/nebula-100k/train.jsonl",
+  "validation_file": "training/nebula-100k/validation.jsonl",
+  "output_dir": "training/outputs/nebula-qwen2.5-coder-7b-unified-100k-v1-adapter",
+  "max_length": 1536,
+  "per_device_train_batch_size": 1,
+  "per_device_eval_batch_size": 1,
+  "gradient_accumulation_steps": 16,
+  "learning_rate": 0.00008,
+  "num_train_epochs": 1.0,
+  "logging_steps": 10,
+  "warmup_ratio": 0.03,
+  "weight_decay": 0.01,
+  "max_grad_norm": 0.3,
+  "seed": 42,
+  "lora_r": 16,
+  "lora_alpha": 32,
+  "lora_dropout": 0.05,
+  "target_modules": "all-linear"
+}

@@ -113,6 +113,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=Path("training/configs/gemma-7b-nebula-qlora.json"))
     parser.add_argument("--output-dir", type=Path, help="Override output_dir, useful for mounted Google Drive")
+    parser.add_argument("--train-file", type=Path, help="Override train_file for a staged pilot")
+    parser.add_argument("--validation-file", type=Path, help="Override validation_file")
     parser.add_argument("--resume", action="store_true", help="Resume from the latest checkpoint in output_dir")
     args = parser.parse_args()
     config_path = resolve_path(args.config)
@@ -131,8 +133,8 @@ def main() -> int:
     set_seed(seed)
     output_dir = args.output_dir.resolve() if args.output_dir else resolve_path(config["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
-    train_file = resolve_path(config["train_file"])
-    validation_file = resolve_path(config["validation_file"])
+    train_file = args.train_file.resolve() if args.train_file else resolve_path(config["train_file"])
+    validation_file = args.validation_file.resolve() if args.validation_file else resolve_path(config["validation_file"])
     if not train_file.exists() or not validation_file.exists():
         raise SystemExit("Prepared train/validation JSONL files are missing. Run prepare_dataset.py first.")
 

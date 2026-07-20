@@ -45,10 +45,24 @@ training/qwen/data/
 training/qwen/results/
 training/qwen3/data/
 training/qwen3/results/
+training/nebula-100k/*.jsonl
+training/nebula-100k/*.json
+training/nebula-100k-smoke/
+training/nebula-100k/stages/
+training/nebula-100k-reviewed/
+training/nebula-100k-colab-bundle.zip
 training/**/adapter/
 training/**/*adapter*.safetensors
 training/**/*.zip
 training/*-log.jsonl
+training/reports/**/*-raw-*.jsonl
+*.gguf
+*.safetensors
+*.ckpt
+optimizer.pt
+scheduler.pt
+training_args.bin
+rng_state.pth
 
 # Private local state and credentials
 memory/
