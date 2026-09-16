@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { webSearch } from './web'
+import { isPrivateOrLocalUrl, isSuspiciousUrl, webSearch } from './web'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -41,5 +41,42 @@ describe('webSearch', () => {
     await expect(webSearch('unknown current event', 5)).rejects.toThrow(
       'Live web search returned no verified results',
     )
+  })
+})
+
+describe('SSRF protection', () => {
+  it('blocks private and local network addresses', () => {
+    expect(isPrivateOrLocalUrl('http://localhost:8080/path')).toBe(true)
+    expect(isPrivateOrLocalUrl('http://127.0.0.1:1234/api')).toBe(true)
+    expect(isPrivateOrLocalUrl('http://0.0.0.0')).toBe(true)
+    expect(isPrivateOrLocalUrl('http://[::1]')).toBe(true)
+    expect(isPrivateOrLocalUrl('http://10.0.0.1:80')).toBe(true)
+    expect(isPrivateOrLocalUrl('http://192.168.1.1')).toBe(true)
+    expect(isPrivateOrLocalUrl('http://172.16.0.1')).toBe(true)
+    expect(isPrivateOrLocalUrl('http://169.254.1.1')).toBe(true)
+    expect(isPrivateOrLocalUrl('http://myhost.local')).toBe(true)
+  })
+
+  it('blocks non-HTTP protocols and downloadable file extensions', () => {
+    expect(isPrivateOrLocalUrl('ftp://example.com/file')).toBe(true)
+    expect(isPrivateOrLocalUrl('file:///etc/passwd')).toBe(true)
+    expect(isPrivateOrLocalUrl('https://example.com/installer.exe')).toBe(true)
+    expect(isPrivateOrLocalUrl('https://example.com/archive.zip')).toBe(true)
+  })
+
+  it('allows legitimate public HTTPS URLs', () => {
+    expect(isPrivateOrLocalUrl('https://example.com')).toBe(false)
+    expect(isPrivateOrLocalUrl('https://docs.github.com/en/actions')).toBe(false)
+  })
+
+  it('treats unparseable URLs as private', () => {
+    expect(isPrivateOrLocalUrl('not-a-url')).toBe(true)
+  })
+
+  it('flags URLs with credentials or suspicious keywords', () => {
+    expect(isSuspiciousUrl('https://user:pass@example.com')).toBe(true)
+    expect(isSuspiciousUrl('https://example.com/auth/callback?token=abc')).toBe(true)
+    expect(isSuspiciousUrl('https://example.com/download/payload')).toBe(true)
+    expect(isSuspiciousUrl('https://example.com/search?q=normal')).toBe(false)
   })
 })

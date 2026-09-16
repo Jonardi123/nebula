@@ -26,7 +26,7 @@ export function isPrivateOrLocalUrl(url: string) {
 
     if (!['http:', 'https:'].includes(parsed.protocol)) return true
     if (hostname === 'localhost' || hostname.endsWith('.local')) return true
-    if (hostname === '127.0.0.1' || hostname === '0.0.0.0' || hostname === '::1') return true
+    if (hostname === '127.0.0.1' || hostname === '0.0.0.0' || hostname === '::1' || hostname === '[::1]') return true
     if (/^10\./.test(hostname)) return true
     if (/^192\.168\./.test(hostname)) return true
     if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)) return true
