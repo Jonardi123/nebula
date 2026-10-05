@@ -765,7 +765,8 @@ export async function streamChat(
 
   function consumeLine(line: string) {
     const trimmed = line.trim()
-    if (!trimmed.startsWith('data:') || trimmed === 'data: [DONE]') return
+    if (!trimmed.startsWith('data:')) return false
+    if (trimmed.slice(5).trim() === '[DONE]') return true
     try {
       const json = JSON.parse(trimmed.slice(5).trim())
       const token = json?.choices?.[0]?.delta?.content
@@ -776,17 +777,24 @@ export async function streamChat(
     } catch {
       // A malformed server-sent event is ignored; later chunks can still complete the response.
     }
+    return false
   }
 
-  while (true) {
-    const { done, value } = await reader.read()
-    pending += decoder.decode(value ?? new Uint8Array(), { stream: !done })
-    const lines = pending.split(/\r?\n/)
-    pending = done ? '' : lines.pop() ?? ''
-    for (const line of lines) consumeLine(line)
-    if (done) break
+  try {
+    stream: while (true) {
+      const { done, value } = await reader.read()
+      pending += decoder.decode(value ?? new Uint8Array(), { stream: !done })
+      const lines = pending.split(/\r?\n/)
+      pending = done ? '' : lines.pop() ?? ''
+      for (const line of lines) {
+        if (consumeLine(line)) break stream
+      }
+      if (done) break
+    }
+  } finally {
+    await reader.cancel().catch(() => {})
+    reader.releaseLock()
   }
-  if (pending) consumeLine(pending)
 
   if (!full) {
     const content = await sendChat(settings, messages)
